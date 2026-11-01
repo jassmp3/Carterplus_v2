@@ -1,0 +1,964 @@
+// ==UserScript==
+// @name         Carter+
+// @namespace    https://by-jass.carter-plus
+// @version      2.3.0
+// @description  carter+ by jass: ctrl + drag a box over seats or checkboxes, pick a quantity, it selects them and hits reserve
+// @author       Jass
+// @match        https://www.ticketmaster.com/*
+// @match        https://www.ticketmaster.ca/*
+// @match        https://www.ticketmaster.co.uk/*
+// @match        https://www.ticketmaster.com.au/*
+// @match        https://www.ticketmaster.de/*
+// @match        https://www.ticketmaster.fr/*
+// @run-at       document-start
+// @noframes
+// @grant        none
+// ==/UserScript==
+
+(function () {
+  'use strict';
+  if (window.__carterPlusLoaded) return;
+  window.__carterPlusLoaded = true;
+
+  const TAB_KEY = 'carter_plus_tab';
+  const RES_KEY = 'carter_plus_reserved';
+  const BLOCK = /checkout|authori[sz]ation/i;
+  const blocked = () => BLOCK.test(location.href);
+  const IS_MAC = /Mac|iPhone|iPad/i.test(navigator.platform || '');
+  const hasMod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
+  const median = (a) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+
+  const st = { on: false, qty: 2, multi: false };
+  try { Object.assign(st, JSON.parse(sessionStorage.getItem(TAB_KEY) || '{}')); } catch (_) {}
+  const save = () => { try { sessionStorage.setItem(TAB_KEY, JSON.stringify({ on: st.on, qty: st.qty, multi: st.multi })); } catch (_) {} };
+
+  const h = (tag, props, ...kids) => {
+    const e = document.createElement(tag);
+    for (const k in props || {}) { if (k === 'text') e.textContent = props[k]; else e.setAttribute(k, props[k]); }
+    for (const c of kids) if (c) e.append(c);
+    return e;
+  };
+  function addCss(root, css) {
+    try { const s = new CSSStyleSheet(); s.replaceSync(css); root.adoptedStyleSheets = [s]; }
+    catch (_) { const el = document.createElement('style'); el.textContent = css; root.appendChild(el); }
+  }
+  const mc = new MessageChannel();
+  let waiters = [];
+  mc.port1.onmessage = () => { const w = waiters; waiters = []; w.forEach((f) => f()); };
+  const yieldNow = () => new Promise((res) => { waiters.push(res); mc.port2.postMessage(0); });
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity || '1') > 0.05;
+  };
+  const parentOf = (el) => { if (el.parentElement) return el.parentElement; const r = el.getRootNode && el.getRootNode(); return r && r.host ? r.host : null; };
+  function* walk(r) { for (const el of r.querySelectorAll('*')) { yield el; if (el.shadowRoot) yield* walk(el.shadowRoot); } }
+
+  const logs = [];
+  let ui = null;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  function log(obj) {
+    const d = new Date();
+    const line = JSON.stringify(Object.assign({ t: pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) }, obj));
+    logs.push(line);
+    if (logs.length > 80) logs.shift();
+    if (ui) ui.addLine(line);
+  }
+
+  const UI_CSS = `
+    :host { all: initial; }
+    .card { position: fixed; top: 8px; right: 8px; width: 344px; box-sizing: border-box; padding: 14px 16px 12px; background: #000; color: #39ff6a;
+      font: 13px/1.6 "Roboto Mono", ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace; text-shadow: 0 0 6px rgba(57,255,106,.65);
+      border: 1px solid rgba(57,255,106,.55); border-radius: 10px; box-shadow: 0 0 0 1px #052b0f, 0 0 22px rgba(57,255,106,.28), inset 0 0 26px rgba(57,255,106,.08);
+      user-select: none; z-index: 2147483647; text-transform: lowercase; }
+    .card[hidden] { display: none; }
+    .head { display: flex; align-items: flex-start; justify-content: space-between; cursor: move; }
+    .title { font-size: 20px; font-weight: 700; letter-spacing: .02em; text-shadow: 0 0 9px #39ff6a, 0 0 22px rgba(57,255,106,.55); }
+    .by { font-size: 11px; color: #22b84a; text-shadow: none; margin-top: -2px; }
+    .rst { cursor: pointer; background: transparent; color: #39ff6a; border: 1px solid rgba(57,255,106,.55); border-radius: 6px; width: 28px; height: 28px; font: 16px/1 inherit; text-shadow: inherit; transition: box-shadow .2s, transform .15s; }
+    .rst:hover { box-shadow: 0 0 12px rgba(57,255,106,.7); }
+    .rst:active { transform: rotate(180deg) scale(.92); }
+    .code { margin-top: 10px; white-space: pre; }
+    .line { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+    .ind { white-space: pre; }
+    .k { color: #8dffae; }
+    .p { color: #1f9d42; text-shadow: none; }
+    .sw { position: relative; width: 38px; height: 18px; border: 1px solid #39ff6a; border-radius: 10px; background: #021a08; cursor: pointer; transition: box-shadow .25s, background .25s, border-color .25s; flex: none; }
+    .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #1f5a30; transition: transform .25s, background .25s, box-shadow .25s; }
+    .sw.on { background: #063d16; box-shadow: 0 0 12px rgba(57,255,106,.75); }
+    .sw.on::after { transform: translateX(20px); background: #39ff6a; box-shadow: 0 0 9px #39ff6a; }
+    .sw:not(.on) { border-color: #1b6b30; }
+    .q { cursor: pointer; min-width: 36px; text-align: center; color: #b9ff5a; border: 1px solid rgba(57,255,106,.55); border-radius: 5px; background: #021a08; padding: 0 8px; font: inherit; text-shadow: 0 0 6px rgba(185,255,90,.7); transition: box-shadow .2s, transform .12s; }
+    .q:hover { box-shadow: 0 0 10px rgba(57,255,106,.6); }
+    .q:active { transform: scale(.92); }
+    .log { margin-top: 10px; height: 214px; box-sizing: border-box; padding: 8px 9px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
+      border: 1px solid rgba(57,255,106,.35); border-radius: 7px; background: #010a03; box-shadow: inset 0 0 14px rgba(57,255,106,.1);
+      font-size: 10.5px; line-height: 1.45; text-shadow: 0 0 4px rgba(57,255,106,.5); }
+    .l { white-space: pre-wrap; word-break: break-all; color: #2fd35a; animation: ln .25s ease-out; }
+    .l.hi { color: #b9ff5a; text-shadow: 0 0 7px rgba(185,255,90,.8); }
+    .l.dim { color: #1d8f3e; text-shadow: none; }
+    @keyframes ln { from { opacity: 0; transform: translateY(4px); } }
+    .foot { margin-top: 8px; font-size: 10.5px; color: #1f8f3f; text-shadow: none; }
+    .caret { animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+  `;
+  function buildUI() {
+    const host = h('div', { 'data-carter': '' });
+    host.style.cssText = 'all:initial;position:fixed;top:0;left:0;width:0;height:0;z-index:2147483647;';
+    const root = host.attachShadow({ mode: 'closed' });
+    addCss(root, UI_CSS);
+    const card = h('div', { class: 'card' });
+    card.hidden = true;
+    const reset = h('button', { class: 'rst', title: 'reset selections', text: '\u21bb' });
+    const head = h('div', { class: 'head' }, h('div', {}, h('div', { class: 'title', text: '_carter+' }), h('div', { class: 'by', text: 'by_jass' })), reset);
+    const sw = h('div', { class: 'sw', role: 'switch', tabindex: '0' });
+    const q = h('button', { class: 'q' });
+    const mode = h('button', { class: 'q' });
+    const row = (k, ctl) => h('div', { class: 'line' }, h('span', { class: 'ind', text: '  ' }), h('span', { class: 'k', text: '"' + k + '":' }), ctl, h('span', { class: 'p', text: ',' }));
+    const code = h('div', { class: 'code' },
+      h('div', { class: 'line' }, h('span', { class: 'p', text: '{' })),
+      row('power', sw), row('quantity', q), row('mode', mode),
+      h('div', { class: 'line' }, h('span', { class: 'p', text: '}' }))
+    );
+    const logEl = h('div', { class: 'log' });
+    const foot = h('div', { class: 'foot' }, '// shift+alt to hide', h('span', { class: 'caret', text: '_' }));
+    card.append(head, code, logEl, foot);
+    root.append(card);
+
+    sw.addEventListener('click', () => setPower(!st.on));
+    sw.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setPower(!st.on); } });
+    q.addEventListener('click', () => setQty(st.qty >= 10 ? 1 : st.qty + 1));
+    mode.addEventListener('click', () => setMulti(!st.multi));
+    reset.addEventListener('click', resetSelections);
+
+    let drag = null;
+    head.addEventListener('pointerdown', (e) => {
+      if (e.target === reset) return;
+      const r = card.getBoundingClientRect();
+      drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+      head.setPointerCapture(e.pointerId);
+    });
+    head.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      card.style.right = 'auto'; card.style.left = Math.max(0, e.clientX - drag.dx) + 'px'; card.style.top = Math.max(0, e.clientY - drag.dy) + 'px';
+    });
+    head.addEventListener('pointerup', () => { drag = null; });
+
+    function addLine(text) {
+      const d = h('div', { class: 'l', text: text.replace(/,/g, ',\u200b') });
+      if (/"(selected|reserve|dialog|alarm|found|orphan)"/.test(text)) d.className = 'l hi';
+      else if (/"scan"|"waiting"/.test(text)) d.className = 'l dim';
+      logEl.appendChild(d);
+      while (logEl.childNodes.length > 40) logEl.removeChild(logEl.firstChild);
+    }
+    function render() {
+      sw.classList.toggle('on', st.on);
+      sw.setAttribute('aria-checked', String(st.on));
+      q.textContent = String(st.qty);
+      mode.textContent = st.multi ? 'multi' : 'single';
+    }
+    logs.slice(-40).forEach(addLine);
+    ui = { host, card, render, addLine, toggle() { card.hidden = !card.hidden; render(); }, hide() { card.hidden = true; } };
+    render();
+    document.documentElement.appendChild(host);
+  }
+  function togglePopup() {
+    if (blocked()) return;
+    if (!ui) buildUI();
+    else if (!ui.host.isConnected) document.documentElement.appendChild(ui.host);
+    ui.toggle();
+  }
+
+  let chordDirty = false;
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Shift' || e.key === 'Alt') {
+      if (!e.repeat && e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey && !chordDirty) togglePopup();
+    } else if (e.shiftKey || e.altKey) chordDirty = true;
+  }, true);
+  window.addEventListener('keyup', (e) => { if (!e.shiftKey && !e.altKey) chordDirty = false; }, true);
+
+  let audio = null;
+  function primeAudio() {
+    try {
+      if (!audio) { const AC = window.AudioContext || window.webkitAudioContext; if (AC) audio = new AC(); }
+      if (audio && audio.state === 'suspended') audio.resume();
+    } catch (_) {}
+  }
+  function siren() {
+    primeAudio();
+    if (!audio) return;
+    const ctx = audio, DUR = 5, CYC = 0.2, t0 = ctx.currentTime + 0.02;
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(1, t0); master.gain.setValueAtTime(1, t0 + DUR - 0.05); master.gain.linearRampToValueAtTime(0, t0 + DUR);
+    const comp = ctx.createDynamicsCompressor(); master.connect(comp); comp.connect(ctx.destination);
+    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), g1 = ctx.createGain(), g2 = ctx.createGain();
+    o1.type = 'sawtooth'; o2.type = 'square'; g1.gain.value = 0.6; g2.gain.value = 0.25;
+    o1.connect(g1); o2.connect(g2); g1.connect(master); g2.connect(master);
+    o1.frequency.setValueAtTime(750, t0); o2.frequency.setValueAtTime(375, t0);
+    for (let t = 0; t < DUR; t += CYC) {
+      o1.frequency.linearRampToValueAtTime(1900, t0 + t + CYC / 2); o1.frequency.linearRampToValueAtTime(750, t0 + t + CYC);
+      o2.frequency.linearRampToValueAtTime(950, t0 + t + CYC / 2); o2.frequency.linearRampToValueAtTime(375, t0 + t + CYC);
+    }
+    o1.start(t0); o2.start(t0); o1.stop(t0 + DUR); o2.stop(t0 + DUR);
+    window.__carterSirens = (window.__carterSirens || 0) + 1;
+    const again = () => { if (audio.state === 'suspended') audio.resume(); };
+    ['pointerdown', 'keydown', 'mousemove'].forEach((t) => window.addEventListener(t, again, { once: true, capture: true }));
+  }
+  function markReserved() {
+    const t = String(Date.now());
+    try { sessionStorage.setItem(RES_KEY, t); } catch (_) {}
+    try { if (!window.name || window.name.startsWith('carter_')) window.name = 'carter_' + t; } catch (_) {}
+  }
+  function takeReservedFlag() {
+    let t = 0;
+    try { t = +sessionStorage.getItem(RES_KEY) || 0; } catch (_) {}
+    if (!t) { const m = /^carter_(\d+)$/.exec(window.name || ''); if (m) t = +m[1]; }
+    try { sessionStorage.removeItem(RES_KEY); } catch (_) {}
+    if (/^carter_\d+$/.test(window.name || '')) { try { window.name = ''; } catch (_) {} }
+    return t && Date.now() - t < 10 * 60 * 1000;
+  }
+
+  let suspended = false, announced = false;
+  function onBlockedPage() {
+    if (!suspended) {
+      suspended = true;
+      clearBoxes(); stopWatch(); stopDialogWatch();
+      if (ui) ui.hide();
+    }
+    if (!announced && takeReservedFlag()) {
+      announced = true;
+      log({ alarm: 5, url: 'checkout' });
+      siren();
+    }
+  }
+
+  const BOX_CSS = `.box{position:absolute;box-sizing:border-box;border:1.5px solid #ff2a1a;border-radius:3px;background:rgba(255,40,20,.10);pointer-events:none;
+    box-shadow:0 0 4px #ff2a1a,0 0 14px rgba(255,50,20,.75),0 0 30px rgba(255,90,20,.35),inset 0 0 14px rgba(255,40,20,.35)}
+    .box.armed{animation:pulse 1.3s ease-in-out infinite}
+    .box.flash{animation:flash .6s ease-out}
+    @keyframes pulse{50%{box-shadow:0 0 2px #ff2a1a,0 0 8px rgba(255,50,20,.55),0 0 18px rgba(255,90,20,.25),inset 0 0 8px rgba(255,40,20,.25)}}
+    @keyframes flash{0%{background:rgba(255,230,200,.5);box-shadow:0 0 6px #fff,0 0 34px #ff5a1a}100%{}}`;
+  let boxHost = null, boxRoot = null;
+  function ensureBoxHost() {
+    if (!boxHost) {
+      boxHost = h('div', { 'data-carter': '' });
+      boxHost.style.cssText = 'all:initial;position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:2147483646;pointer-events:none;';
+      boxRoot = boxHost.attachShadow({ mode: 'closed' });
+      addCss(boxRoot, BOX_CSS);
+    }
+    if (!boxHost.isConnected) document.documentElement.appendChild(boxHost);
+  }
+
+  let epoch = 0, rects = [], boxEls = [], curRect = null, curBox = null;
+  let armed = false, done = false, scanning = false, dragging = false;
+  let sx = 0, sy = 0, cx = 0, cy = 0, styleEl = null, swallowUntil = 0, held = false, lastInput = 0;
+  let phase = 'idle', reserveAt = 0, attempts = 0, lastT = [];
+  let fixing = false, orphanTries = 0;
+  const lastStats = { cands: 0 };
+  const px = (e) => e.clientX + window.scrollX;
+  const py = (e) => e.clientY + window.scrollY;
+  const engineOn = () => st.on && !blocked();
+
+  function place(el, r) {
+    if (!el || !r) return;
+    const t = el.style;
+    t.left = r.l + 'px'; t.top = r.t + 'px'; t.width = (r.r - r.l) + 'px'; t.height = (r.b - r.t) + 'px';
+  }
+  function clearBoxes() {
+    epoch++; armed = false; done = false; scanning = false; phase = st.on ? 'idle' : 'off';
+    orphanTries = 0;
+    rects = []; boxEls.forEach((e) => e.remove()); boxEls = [];
+    if (curBox) { curBox.remove(); curBox = null; }
+    curRect = null;
+    stopWatch(); stopDialogWatch();
+  }
+  const injectStyle = () => {
+    styleEl = document.createElement('style');
+    styleEl.textContent = 'html, html * { -webkit-user-select: none !important; user-select: none !important; -webkit-user-drag: none !important; }';
+    (document.head || document.documentElement).appendChild(styleEl);
+  };
+  const removeStyle = () => { if (styleEl) { styleEl.remove(); styleEl = null; } };
+  const block = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
+  const overlap = (a, b) => !(a.r < b.l || a.l > b.r || a.b < b.t || a.t > b.b);
+
+  function onDown(e) {
+    if (!e.isTrusted) return;
+    if (dragging) { block(e); return; }
+    if (!engineOn() || e.button !== 0 || !hasMod(e)) return;
+    block(e);
+    primeAudio();
+    ensureBoxHost();
+    const X = px(e), Y = py(e);
+    if (st.multi) {
+      if (rects.some((r) => X >= r.l && X <= r.r && Y >= r.t && Y <= r.b)) { log({ selection: 'ignored', why: 'starts inside an existing box' }); return; }
+    } else if (rects.length) clearBoxes();
+    dragging = true;
+    sx = cx = X; sy = cy = Y;
+    try { document.getSelection().removeAllRanges(); } catch (_) {}
+    injectStyle();
+    curBox = h('div', { class: 'box' });
+    boxRoot.appendChild(curBox);
+    drawDrag();
+  }
+  function drawDrag() { curRect = { l: Math.min(sx, cx), t: Math.min(sy, cy), r: Math.max(sx, cx), b: Math.max(sy, cy) }; place(curBox, curRect); }
+  function onMove(e) {
+    if (!dragging || !e.isTrusted) return;
+    block(e);
+    if (e.buttons === 0) { finishDrag(); return; }
+    cx = px(e); cy = py(e); drawDrag();
+  }
+  function onUp(e) {
+    if (!e.isTrusted) return;
+    if (dragging) { block(e); if (e.button === 0) { cx = px(e); cy = py(e); finishDrag(); } return; }
+    if (Date.now() < swallowUntil) block(e);
+  }
+  function finishDrag() {
+    dragging = false; swallowUntil = Date.now() + 150;
+    removeStyle(); drawDrag();
+    const r = curRect, el = curBox;
+    curRect = null; curBox = null;
+    if (rects.some((o) => overlap(r, o))) { el.remove(); log({ selection: 'ignored', why: 'overlaps an existing box' }); return; }
+    rects.push(r); boxEls.push(el);
+    el.className = 'box armed';
+    log({ selection: 'created', id: rects.length, size: Math.round(r.r - r.l) + 'x' + Math.round(r.b - r.t), boxes: rects.length });
+    if (phase === 'idle' || phase === 'scan' || phase === 'done' || phase === 'off') { armed = true; done = false; phase = 'scan'; attempts = 0; startWatch(); }
+    startDialogWatch();
+    scan();
+  }
+  function cancelDrag() {
+    if (!dragging) return;
+    dragging = false; removeStyle();
+    if (curBox) { curBox.remove(); curBox = null; }
+    curRect = null;
+  }
+  const onClick = (e) => { if (e.isTrusted && Date.now() < swallowUntil) block(e); };
+  const onGuard = (e) => { if (dragging || Date.now() < swallowUntil) block(e); };
+  const onKey = (e) => { if (dragging && e.key === 'Escape') { block(e); cancelDrag(); } };
+  const track = (e) => {
+    if (!e.isTrusted || dragging) return;
+    const t = performance.now();
+    if (e.type === 'pointerdown') { if (e.button === 0 && hasMod(e) && engineOn()) return; held = true; lastInput = t; }
+    else if (e.type === 'pointerup' || e.type === 'pointercancel') { held = false; lastInput = t; }
+    else if (e.type === 'wheel') lastInput = t;
+  };
+  ['pointerdown', 'pointerup', 'pointercancel', 'wheel'].forEach((t) => window.addEventListener(t, track, { capture: true, passive: true }));
+  const o = { capture: true, passive: false };
+  ['pointerdown', 'mousedown'].forEach((t) => window.addEventListener(t, onDown, o));
+  ['pointermove', 'mousemove'].forEach((t) => window.addEventListener(t, onMove, o));
+  ['pointerup', 'mouseup'].forEach((t) => window.addEventListener(t, onUp, o));
+  window.addEventListener('click', onClick, o);
+  ['contextmenu', 'dragstart', 'selectstart', 'dragenter', 'dragover'].forEach((t) => window.addEventListener(t, onGuard, o));
+  window.addEventListener('keydown', onKey, o);
+  window.addEventListener('blur', () => { held = false; cancelDrag(); });
+
+  const STRONG = 'input[type=checkbox],input[type=radio],input[type=button],input[type=submit],input[type=reset],button,summary,a[href],[role=checkbox],[role=radio],[role=button],[role=switch],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=tab],[role=link],[aria-checked],[aria-pressed]';
+  const WEAK = 'label,[data-seat],[data-seat-id],[data-seatid],[class*="seat" i],[onclick]';
+  const TAKEN = /\b(selected|sold|taken|unavailable|disabled|occupied|reserved|booked|checked)\b/i;
+  const PK = { span: 1.5, tol: 0.4, ang: 28, cons: 25, vote: 1.12 };
+
+  function isAvailable(el) {
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+    if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio') && el.checked) return false;
+    for (const a of ['aria-checked', 'aria-pressed', 'aria-selected']) if (el.getAttribute(a) === 'true') return false;
+    if (el.tagName === 'SUMMARY' && el.parentElement && el.parentElement.open) return false;
+    const cls = el.getAttribute('class');
+    return !(cls && TAKEN.test(cls));
+  }
+
+  const NATIVE = /^(INPUT|BUTTON|A|SELECT|SUMMARY|LABEL|TEXTAREA)$/;
+  const parseRGB = (v) => { const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/.exec(v || ''); return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null; };
+  function toHsl({ r, g, b }) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+    let hh = 0, ss = 0;
+    if (d) { ss = d / (1 - Math.abs(2 * l - 1)); hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; hh *= 60; if (hh < 0) hh += 360; }
+    return { h: hh, s: ss, l };
+  }
+  function paint(el, d) {
+    const cs = getComputedStyle(el), svg = el instanceof SVGElement, container = svg && /^(g|use|svg|a)$/i.test(el.tagName);
+    if (!container) {
+      const c = svg ? (parseRGB(cs.fill) || parseRGB(cs.stroke)) : parseRGB(cs.backgroundColor);
+      if (c && c.a >= 0.1) return c;
+    }
+    if (d < 2) for (const k of el.children) { const r = paint(k, d + 1); if (r) return r; }
+    if (container) { const c = parseRGB(cs.fill); if (c && c.a >= 0.1) return c; }
+    return null;
+  }
+  function seatLike(el, rc, cs) {
+    if (NATIVE.test(el.tagName) || rc.width > 64 || rc.height > 64) return false;
+    if (el instanceof SVGElement || /seat/i.test(el.getAttribute('class') || '') || el.hasAttribute('data-seat')) return true;
+    const br = cs.borderRadius || '';
+    return /%/.test(br) ? parseFloat(br) >= 40 : parseFloat(br) >= Math.min(rc.width, rc.height) / 2 - 1;
+  }
+  function blueOk(el, rc, cs) {
+    if (!seatLike(el, rc, cs)) return true;
+    if (/resale|verified/i.test((el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('title') || '') + ' ' + (el.getAttribute('class') || '') + ' ' + (el.getAttribute('data-testid') || ''))) return false;
+    const c = paint(el, 0);
+    if (!c) return true;
+    const { h: hh, s: ss } = toHsl(c);
+    return ss >= 0.2 && hh >= 190 && hh <= 270;
+  }
+
+  function viewRects() {
+    const out = [];
+    for (const r of rects) {
+      const v = { l: r.l - window.scrollX, t: r.t - window.scrollY, r: r.r - window.scrollX, b: r.b - window.scrollY };
+      if (v.r < 0 || v.b < 0 || v.l > innerWidth || v.t > innerHeight) continue;
+      out.push(v);
+    }
+    return out;
+  }
+  function scanRegion(sels) {
+    const vw = innerWidth, vh = innerHeight, M = 80;
+    const B = { l: Math.min(...sels.map((q) => q.l)), t: Math.min(...sels.map((q) => q.t)), r: Math.max(...sels.map((q) => q.r)), b: Math.max(...sels.map((q) => q.b)) };
+    const hit = (rc) => sels.some((q) => !(rc.right < q.l - 1 || rc.left > q.r + 1 || rc.bottom < q.t - 1 || rc.top > q.b + 1));
+    const near = [], all = new Set(), strong = new Set();
+    for (const el of walk(document)) {
+      if (el.hasAttribute('data-carter')) continue;
+      const rc = el.getBoundingClientRect();
+      if (rc.width <= 0 || rc.height <= 0) continue;
+      if (rc.right < B.l - M || rc.left > B.r + M || rc.bottom < B.t - M || rc.top > B.b + M) continue;
+      near.push({ el, rc });
+      if (!hit(rc)) continue;
+      const tag = el.tagName;
+      if (tag === 'HTML' || tag === 'BODY') continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === 'hidden' || cs.pointerEvents === 'none') continue;
+      const sg = el.matches(STRONG);
+      let w = !sg && el.matches(WEAK);
+      if (!sg && !w) {
+        if (cs.cursor !== 'pointer') continue;
+        const p = parentOf(el);
+        if (p && getComputedStyle(p).cursor === 'pointer') continue;
+        w = true;
+      }
+      if (!sg && rc.width * rc.height > vw * vh * 0.25) continue;
+      if (!isAvailable(el) || !blueOk(el, rc, cs)) continue;
+      all.add(el);
+      if (sg) strong.add(el);
+    }
+    const list = [...all], hasDesc = new Set();
+    for (const el of list) { let p = parentOf(el); while (p) { hasDesc.add(p); p = parentOf(p); } }
+    let kept = list.filter((el) => strong.has(el) || !hasDesc.has(el));
+    const ks = new Set(kept);
+    kept = kept.filter((el) => {
+      if (el.tagName === 'LABEL' && el.control && ks.has(el.control)) return false;
+      let p = parentOf(el);
+      while (p) { if (ks.has(p) && strong.has(p)) return false; p = parentOf(p); }
+      return true;
+    });
+    const items = kept.map((el) => { const r = el.getBoundingClientRect(); return { el, cand: true, x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height }; });
+    lastStats.cands = items.length;
+    if (!items.length) return items;
+    const S = median(items.map((i) => Math.max(i.w, i.h)));
+    const mw = median(items.map((i) => i.w)), mh = median(items.map((i) => i.h));
+    const tags = new Set(kept.map((e) => e.tagName)), anySvg = kept.some((e) => e instanceof SVGElement);
+    for (const { el, rc } of near) {
+      if (all.has(el)) continue;
+      if (rc.width < mw * 0.65 || rc.width > mw * 1.35 || rc.height < mh * 0.65 || rc.height > mh * 1.35) continue;
+      if (!(tags.has(el.tagName) || (anySvg && el instanceof SVGElement))) continue;
+      const x = rc.left + rc.width / 2, y = rc.top + rc.height / 2;
+      if (items.some((i) => Math.hypot(i.x - x, i.y - y) < S * 0.4)) continue;
+      items.push({ el, cand: false, x, y, w: rc.width, h: rc.height });
+    }
+    return items;
+  }
+
+  const angDiff = (a, b) => { let d = Math.abs(a - b) % Math.PI; if (d > Math.PI / 2) d = Math.PI - d; return d; };
+  function pick(raw, N, P) {
+    const R = Math.PI / 180, items = [];
+    for (const it of raw) {
+      const S = Math.max(it.w, it.h) * 0.35, j = items.findIndex((o2) => Math.hypot(o2.x - it.x, o2.y - it.y) < S);
+      if (j < 0) items.push(it); else if (it.cand && !items[j].cand) items[j] = it;
+    }
+    const C = items.filter((i) => i.cand);
+    if (!C.length) return null;
+    const tol = Math.max(4, median(C.map((c) => Math.max(c.w, c.h))) * P.tol);
+    const order = (a, b) => (Math.abs(a.y - b.y) > tol ? a.y - b.y : a.x - b.x);
+    if (N <= 1) return [C.slice().sort(order)[0]];
+    const E = items;
+    if (E.length < 2 || E.length > 900) return null;
+    const phi = new Map();
+    for (const a of E) {
+      const ds = [];
+      for (const b of E) if (b !== a) ds.push({ b, d: Math.hypot(b.x - a.x, b.y - a.y) });
+      ds.sort((p, q) => p.d - q.d);
+      const near = ds[0].d;
+      let sc = 0, ss = 0, cnt = 0;
+      for (const q of ds) { if (q.d > near * P.vote || cnt >= 4) break; const th = Math.atan2(q.b.y - a.y, q.b.x - a.x); sc += Math.cos(2 * th); ss += Math.sin(2 * th); cnt++; }
+      let ang = 0.5 * Math.atan2(ss, sc);
+      if (cnt > 1 && Math.hypot(sc, ss) / cnt < 0.5) ang = Math.atan2(ds[0].b.y - a.y, ds[0].b.x - a.x);
+      phi.set(a, ang);
+    }
+    const cosA = Math.cos(P.ang * R);
+    const look = (a, sign) => {
+      const t = phi.get(a), ux = Math.cos(t) * sign, uy = Math.sin(t) * sign;
+      let best = null, bd = Infinity;
+      for (const b of E) {
+        if (b === a) continue;
+        const vx = b.x - a.x, vy = b.y - a.y, d = Math.hypot(vx, vy);
+        if (d >= bd || (vx * ux + vy * uy) / d < cosA) continue;
+        bd = d; best = b;
+      }
+      return best ? { b: best, d: bd } : null;
+    };
+    const side = new Map();
+    for (const a of E) side.set(a, [look(a, 1), look(a, -1)]);
+    const has = (a, b) => side.get(a).some((s) => s && s.b === b);
+    let id = 0;
+    for (const e of E) e.__id = id++;
+    const links = [], seen = new Set();
+    for (const a of E) for (const s of side.get(a)) {
+      if (!s || !has(s.b, a) || angDiff(phi.get(a), phi.get(s.b)) > P.cons * R) continue;
+      const k = Math.min(a.__id, s.b.__id) + ':' + Math.max(a.__id, s.b.__id);
+      if (seen.has(k)) continue;
+      seen.add(k); links.push({ a, b: s.b, d: s.d });
+    }
+    const m = median(links.map((e) => e.d)), adj = new Map();
+    for (const e of links) {
+      if (!(e.a.cand && e.b.cand && e.d <= P.span * m)) continue;
+      if (!adj.has(e.a)) adj.set(e.a, []);
+      if (!adj.has(e.b)) adj.set(e.b, []);
+      adj.get(e.a).push(e.b); adj.get(e.b).push(e.a);
+    }
+    const runs = [], used = new Set();
+    for (const s of C) {
+      const nb = adj.get(s);
+      if (!nb || nb.length !== 1 || used.has(s)) continue;
+      const run = [s]; used.add(s);
+      let prev = s, cur = nb[0];
+      while (cur) { run.push(cur); used.add(cur); const nx = (adj.get(cur) || []).filter((x) => x !== prev); prev = cur; cur = nx.length === 1 ? nx[0] : null; }
+      if (order(run[0], run[run.length - 1]) > 0) run.reverse();
+      if (run.length >= N) runs.push(run);
+    }
+    if (!runs.length) return null;
+    runs.sort((p, q) => (p.length - q.length) || order(p[0], q[0]));
+    const best = runs[0];
+    return best.length === N + 1 ? best : best.slice(0, N);
+  }
+  const findGroup = (sels, N) => { const items = scanRegion(sels); return items.some((i) => i.cand) ? pick(items, N, PK) : null; };
+
+  function press(el, x, y) {
+    const base = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
+    const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+    const ptr = { pointerId: 1, pointerType: 'mouse', isPrimary: true }, hv = { ...base, buttons: 0 };
+    el.dispatchEvent(new P('pointerover', { ...hv, ...ptr }));
+    el.dispatchEvent(new P('pointerenter', { ...hv, ...ptr, bubbles: false }));
+    el.dispatchEvent(new MouseEvent('mouseover', hv));
+    el.dispatchEvent(new MouseEvent('mouseenter', { ...hv, bubbles: false }));
+    el.dispatchEvent(new P('pointermove', { ...hv, ...ptr }));
+    el.dispatchEvent(new MouseEvent('mousemove', hv));
+    el.dispatchEvent(new P('pointerdown', { ...base, ...ptr, buttons: 1 }));
+    el.dispatchEvent(new MouseEvent('mousedown', { ...base, buttons: 1 }));
+    el.dispatchEvent(new P('pointerup', { ...base, ...ptr, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('mouseup', { ...base, buttons: 0 }));
+    el.dispatchEvent(new MouseEvent('click', { ...base, buttons: 0, detail: 1 }));
+  }
+  const pressCenter = (el) => { const r = el.getBoundingClientRect(); press(el, r.left + r.width / 2, r.top + r.height / 2); };
+  const isLink = (el) => el.tagName === 'A' && el.hasAttribute('href');
+
+  function settle(quiet, max) {
+    return new Promise((res) => {
+      let fin = false, t = 0;
+      const done2 = () => { if (fin) return; fin = true; clearTimeout(t); m.disconnect(); res(); };
+      const m = new MutationObserver(() => { clearTimeout(t); t = setTimeout(done2, quiet); });
+      m.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+      t = setTimeout(done2, quiet); setTimeout(done2, max);
+    });
+  }
+  async function waitAnimations(els, cap) {
+    const end = performance.now() + cap;
+    let waited = false;
+    for (;;) {
+      const pending = [];
+      for (const el of els) {
+        let n = el;
+        for (let i = 0; i < 4 && n; i++) {
+          try {
+            for (const a of n.getAnimations()) {
+              if (a.playState !== 'running') continue;
+              const it = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming().iterations : 1;
+              if (it !== Infinity) pending.push(a.finished.catch(() => {}));
+            }
+          } catch (_) {}
+          n = n.parentElement;
+        }
+      }
+      if (!pending.length || performance.now() >= end) return waited;
+      waited = true;
+      await Promise.race([Promise.all(pending), sleep(Math.max(0, end - performance.now()))]);
+    }
+  }
+  function sig(el) {
+    let s = (el.getAttribute('class') || '') + '|' + (el.getAttribute('aria-checked') || '') + (el.getAttribute('aria-pressed') || '') + (el.getAttribute('aria-selected') || '') + '|' + (el.checked ? 1 : 0) + '|' + el.childElementCount;
+    try { const cs = getComputedStyle(el); s += '|' + cs.backgroundColor + cs.fill + cs.stroke + cs.color + cs.borderColor; } catch (_) {}
+    return s;
+  }
+  function quickFind(t) {
+    const vs = viewRects();
+    if (!vs.length) return null;
+    let best = null, bd = Infinity;
+    for (const it of scanRegion(vs)) { if (!it.cand) continue; const d = Math.hypot(it.x - t.x, it.y - t.y); if (d < bd) { bd = d; best = it; } }
+    return best && bd <= Math.max(10, t.S * 0.7) ? best.el : null;
+  }
+  const isNativeCheck = (el) => el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio');
+
+  function makeTargets(items) {
+    return items.map((it) => {
+      const el = it.el, tag = el.tagName, role = el.getAttribute('role');
+      return { el, x: it.x, y: it.y, pgx: it.x + window.scrollX, pgy: it.y + window.scrollY, S: Math.max(it.w, it.h), again: false, before: sig(el), after: null,
+        risky: tag === 'BUTTON' || tag === 'A' || (tag === 'INPUT' && /button|submit|reset/.test(el.type)) || role === 'button' || role === 'link' };
+    });
+  }
+  function fireTarget(t, multiLink) {
+    if (!t.el.isConnected) { const f = quickFind(t); if (!f) return; t.el = f; }
+    if (t.again && !isAvailable(t.el)) return;
+    const r = t.el.getBoundingClientRect(), mods = {};
+    if (multiLink && isLink(t.el)) { if (IS_MAC) mods.metaKey = true; else mods.ctrlKey = true; }
+    try { press(t.el, r.left + r.width / 2, r.top + r.height / 2); } catch (_) {}
+  }
+  async function verifySelect(T, my, ctl) {
+    const lost = () => T.filter((t) => {
+      if (t.risky) return false;
+      if (!t.el.isConnected) { const f = quickFind(t); if (!f) return false; t.el = f; return sig(f) === t.before; }
+      return sig(t.el) === t.before && isAvailable(t.el);
+    });
+    const allNative = T.every((t) => isNativeCheck(t.el));
+    if (!allNative) await settle(22, 140);
+    if (my !== epoch || ctl.reserved) return;
+    let retry = lost();
+    for (let round = 0; round < 3 && retry.length; round++) {
+      if (!allNative && round === 0) { await settle(70, 200); if (my !== epoch || ctl.reserved) return; retry = lost(); if (!retry.length) return; }
+      retry.forEach((t) => { t.again = true; if (t.el.isConnected) t.before = sig(t.el); fireTarget(t, false); });
+      if (!allNative) await settle(round ? 80 : 40, 180);
+      if (my !== epoch || ctl.reserved) return;
+      retry = lost();
+    }
+  }
+
+  function isSelectedLike(el) {
+    if (el.tagName === 'INPUT' && el.checked) return true;
+    for (const a of ['aria-checked', 'aria-pressed', 'aria-selected']) if (el.getAttribute(a) === 'true') return true;
+    if (/\b(selected|checked|chosen|picked)\b/i.test(el.getAttribute('class') || '')) return true;
+    try {
+      const rc = el.getBoundingClientRect();
+      if (rc.width > 64 || rc.height > 64 || !seatLike(el, rc, getComputedStyle(el))) return false;
+      const c = paint(el, 0);
+      if (!c) return false;
+      const { h: hh, s: ss } = toHsl(c);
+      return ss >= 0.35 && hh >= 85 && hh <= 175;
+    } catch (_) { return false; }
+  }
+  function looksAvailable(el) {
+    try {
+      const cs = getComputedStyle(el), rc = el.getBoundingClientRect();
+      const clickable = el.matches(STRONG) || el.matches(WEAK) || cs.cursor === 'pointer';
+      return clickable && isAvailable(el) && !isSelectedLike(el) && blueOk(el, rc, cs);
+    } catch (_) { return false; }
+  }
+  function findAnyAt(t) {
+    const x = t.pgx - window.scrollX, y = t.pgy - window.scrollY;
+    for (const el of document.elementsFromPoint(x, y)) {
+      if (el.closest && el.closest('[data-carter]')) continue;
+      const r = el.getBoundingClientRect(), sz = Math.max(r.width, r.height);
+      if (sz < t.S * 0.6 || sz > t.S * 1.6) continue;
+      if (Math.hypot(r.left + r.width / 2 - x, r.top + r.height / 2 - y) > Math.max(10, t.S * 0.7)) continue;
+      return el;
+    }
+    return null;
+  }
+  function seatState(t) {
+    const el = findAnyAt(t);
+    if (!el) return 'gone';
+    if (looksAvailable(el) || sig(el) === t.before) return 'released';
+    if (isSelectedLike(el) || (t.after && sig(el) === t.after)) return 'selected';
+    return 'gone';
+  }
+  async function captureAfter(T) {
+    await settle(30, 200);
+    for (const t of T) { try { const el = findAnyAt(t); t.after = el ? sig(el) : null; } catch (_) {} }
+  }
+  function countSelected(vs) {
+    const hit = (rc) => vs.some((q) => rc.left >= q.l - 2 && rc.right <= q.r + 2 && rc.top >= q.t - 2 && rc.bottom <= q.b + 2) || vs.some((q) => { const cx2 = rc.left + rc.width / 2, cy2 = rc.top + rc.height / 2; return cx2 >= q.l && cx2 <= q.r && cy2 >= q.t && cy2 <= q.b; });
+    const out = [];
+    for (const el of walk(document)) {
+      if (el.hasAttribute('data-carter')) continue;
+      const rc = el.getBoundingClientRect();
+      if (rc.width <= 0 || rc.height <= 0 || rc.width > 64 || rc.height > 64 || !hit(rc)) continue;
+      if (!isSelectedLike(el)) continue;
+      const x = rc.left + rc.width / 2, y = rc.top + rc.height / 2;
+      if (out.some((o) => Math.hypot(o.x - x, o.y - y) < Math.max(rc.width, rc.height) * 0.5)) continue;
+      out.push({ el, x, y, w: rc.width, h: rc.height });
+    }
+    return out;
+  }
+
+  let mo = null, timer = null, schedT = 0, lastScan = 0, retryT = 0, lastMut = 0;
+  function startWatch() {
+    stopWatch();
+    if (!armed || !engineOn()) return;
+    mo = new MutationObserver(() => { lastMut = performance.now(); sched(); });
+    mo.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+    timer = setInterval(scan, 50);
+  }
+  function stopWatch() { if (mo) { mo.disconnect(); mo = null; } if (timer) { clearInterval(timer); timer = null; } }
+  function sched() { if (schedT) return; schedT = setTimeout(() => { schedT = 0; scan(); }, 0); }
+
+  async function scan() {
+    if (!armed || done || scanning || !engineOn() || !rects.length) return;
+    const now = performance.now();
+    if (held || now - lastInput < 140) { if (!retryT) retryT = setTimeout(() => { retryT = 0; scan(); }, 40); return; }
+    if (now - lastScan < 10) { if (!retryT) retryT = setTimeout(() => { retryT = 0; scan(); }, 12); return; }
+    lastScan = now;
+    const vs = viewRects();
+    if (!vs.length) return;
+    let group = null;
+    try { group = findGroup(vs, st.qty); } catch (_) { return; }
+    if (!group) return;
+
+    const t0 = performance.now(), my = epoch;
+    scanning = true; armed = false; stopWatch(); phase = 'select';
+    log({ found: group.length, need: st.qty });
+    let fresh = group;
+    if (performance.now() - lastMut < 60) {
+      await settle(4, 24);
+      if (my !== epoch) { scanning = false; return; }
+      fresh = null;
+      try { const v2 = viewRects(); fresh = v2.length ? findGroup(v2, st.qty) : null; } catch (_) {}
+      if (!fresh) { scanning = false; armed = true; phase = 'scan'; startWatch(); return; }
+    }
+    if (await waitAnimations(fresh.map((i) => i.el), 500)) {
+      await Promise.race([new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), sleep(60)]);
+    }
+    if (my !== epoch) { scanning = false; return; }
+
+    let already = [];
+    try { already = countSelected(viewRects()); } catch (_) {}
+    if (already.length >= st.qty) {
+      lastT = makeTargets(already).map((t) => Object.assign(t, { before: null, after: sig(t.el) }));
+      log({ selected: 'already', n: already.length });
+      scanning = false; done = true;
+      reserveFast(my, { reserved: false }, t0);
+      return;
+    }
+    const T = makeTargets(fresh), multiLink = fresh.filter((i) => isLink(i.el)).length > 1;
+    lastT = T;
+    orphanTries = 0;
+    captureAfter(T);
+    for (const t of T) fireTarget(t, multiLink);
+    log({ selected: T.length, ms: Math.round(performance.now() - t0) });
+    scanning = false; done = true;
+    boxEls.forEach((b) => { b.className = 'box'; void b.offsetWidth; b.className = 'box flash'; setTimeout(() => { b.className = 'box armed'; }, 650); });
+    const ctl = { reserved: false };
+    verifySelect(T, my, ctl);
+    reserveFast(my, ctl, t0);
+  }
+
+  const RES_EXACT = /^(reserve( now)?|reserve (seats?|tickets?)|reserve selected( seats?| tickets?)?)$/i;
+  function findReserve() {
+    let best = null, bs = 0;
+    for (const el of document.querySelectorAll('button,[role=button],a,input[type=submit],input[type=button],[data-testid*="reserve" i],[data-bdd*="reserve" i]')) {
+      if (el.closest('[data-carter]')) continue;
+      const txt = (el.innerText || el.textContent || el.value || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+      let score = 0;
+      if (RES_EXACT.test(txt)) score = 3;
+      else if (/\breserve\b/i.test(txt) && txt.length < 40) score = 2;
+      else if (/reserve/i.test((el.getAttribute('data-testid') || '') + (el.getAttribute('data-bdd') || ''))) score = 1;
+      if (score > bs && visible(el)) { best = el; bs = score; }
+    }
+    return best;
+  }
+  const enabled = (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true' && !/\bdisabled\b/i.test(el.getAttribute('class') || '');
+  async function reserveFast(my, ctl, t0) {
+    const end = performance.now() + 4000;
+    let b = null, sawDisabled = false, i = 0;
+    while (performance.now() < end) {
+      if (my !== epoch) return;
+      if (!b || !b.isConnected) b = findReserve();
+      if (b && enabled(b)) {
+        ctl.reserved = true; phase = 'reserve'; reserveAt = performance.now();
+        markReserved();
+        try { pressCenter(b); } catch (_) {}
+        log({ reserve: 'clicked', ms: Math.round(performance.now() - t0) });
+        return;
+      }
+      sawDisabled = sawDisabled || !!b;
+      if (++i < 80) await yieldNow(); else await sleep(8);
+    }
+    phase = 'done';
+    log({ reserve: sawDisabled ? 'button not ready' : 'button not found' });
+  }
+
+  const ORPHAN = /single seat|one seat|leav(e|ing) (a |1 )?(single |one )?seat|seats?.{0,25}(left|leaving) (open|empty|alone)|orphan/i;
+  function fixOrphan() {
+    if (fixing) return;
+    fixing = true;
+    const my = epoch;
+    setTimeout(async () => {
+      try {
+        if (my !== epoch || !rects.length) return;
+        if (++orphanTries > 3) { orphanTries = 0; log({ orphan: 'gave up' }); judgeAfterDialog(true); return; }
+        const vs = viewRects();
+        if (!vs.length) return;
+        await settle(30, 200);
+        if (my !== epoch) return;
+        const sel = countSelected(vs);
+        const refs = sel.length ? sel : lastT.map((t) => ({ x: t.pgx - window.scrollX, y: t.pgy - window.scrollY, w: t.S, h: t.S }));
+        if (!refs.length) return;
+        const chosen = new Set(sel.map((s) => s.el));
+        const items = scanRegion(vs).filter((i) => i.cand && !chosen.has(i.el));
+        let best = null, bd = Infinity;
+        for (const it of items) for (const r of refs) {
+          const d = Math.hypot(it.x - r.x, it.y - r.y);
+          if (d < bd) { bd = d; best = it; }
+        }
+        const S = median(refs.map((r) => Math.max(r.w, r.h)));
+        if (!best || bd > S * 2.6) { log({ orphan: 'no seat found' }); judgeAfterDialog(true); return; }
+        const T = makeTargets([best]);
+        captureAfter(T);
+        fireTarget(T[0], false);
+        lastT = lastT.concat(T);
+        log({ selected: 'extra', why: 'single seat left open', n: lastT.length });
+        await verifySelect(T, my, { reserved: false });
+        if (my !== epoch) return;
+        phase = 'reserve'; reserveAt = performance.now();
+        reserveFast(my, { reserved: false }, performance.now());
+      } finally { fixing = false; }
+    }, 250);
+  }
+
+  const DLG = '[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open],[class*="modal" i],[class*="dialog" i],[class*="popup" i],[class*="overlay" i],[data-testid*="modal" i],[data-testid*="dialog" i],[data-testid*="alert" i]';
+  const OK_TIERS = [/^agree\s*(&|and)\s*continue$/, /^continue$/, /^agree$/, /^accept$/, /^ok(ay)?$/, /^got it$/, /^confirm$/, /^yes(,.*)?$/, /^submit$/, /^proceed$/, /^understood$|^i understand$/, /^try again$|^retry$/, /^close$|^dismiss$/];
+  const LOOSE = [/agree/, /continue/, /\bok\b/, /accept/, /confirm/, /submit/, /close|dismiss/];
+  const NO = /^(cancel|no|no thanks|not now|back|go back|decline|exit|leave|x|\u00d7)$/;
+  const ERR = /(went wrong|not available|unavailable|no longer available|error|failed|unable to|expired)/i;
+  const norm = (s) => s.replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim().toLowerCase();
+  const clickedAt = new WeakMap();
+  function findDialogs() {
+    const out = [];
+    for (const d of document.querySelectorAll(DLG)) {
+      if (d.closest('[data-carter]') || !visible(d)) continue;
+      const r = d.getBoundingClientRect();
+      if (r.width < 120 || r.height < 60) continue;
+      const aria = d.matches('[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open]');
+      if (!aria) { const cs = getComputedStyle(d); if (!/fixed|absolute|sticky/.test(cs.position)) continue; }
+      const btns = [];
+      for (const b of d.querySelectorAll('button,[role=button],a[href],input[type=button],input[type=submit]')) {
+        if (!visible(b)) continue;
+        const text = norm(b.innerText || b.textContent || b.value || '');
+        const label = norm(b.getAttribute('aria-label') || '');
+        btns.push({ el: b, text: text || label, icon: !text && /close|dismiss/.test(label) });
+      }
+      if (btns.length) out.push({ el: d, btns, aria, text: (d.innerText || '').slice(0, 500) });
+    }
+    return out;
+  }
+  function chooseButton(btns, allowIcon, allowSingle) {
+    let best = null, bi = 1e9;
+    for (const b of btns) {
+      if (NO.test(b.text) || !enabled(b.el)) continue;
+      let i = OK_TIERS.findIndex((re) => re.test(b.text));
+      if (i < 0) { const j = LOOSE.findIndex((re) => re.test(b.text)); if (j >= 0) i = OK_TIERS.length + j; }
+      if (i < 0 && b.icon && allowIcon) i = OK_TIERS.length + LOOSE.length;
+      if (i < 0 && allowSingle && btns.filter((x) => !NO.test(x.text)).length === 1 && b.text) i = OK_TIERS.length + LOOSE.length + 1;
+      if (i >= 0 && i < bi) { bi = i; best = b; }
+    }
+    return best;
+  }
+  function handleDialogs() {
+    if (!engineOn() || !rects.length) return;
+    for (const d of findDialogs()) {
+      const isErr = ERR.test(d.text);
+      const c = chooseButton(d.btns, isErr, d.aria);
+      if (!c) continue;
+      const last = clickedAt.get(c.el) || 0;
+      if (performance.now() - last < 700) continue;
+      clickedAt.set(c.el, performance.now());
+      try { pressCenter(c.el); } catch (_) {}
+      log({ dialog: 'cleared', clicked: c.text || 'close', text: norm(d.text).slice(0, 44) });
+      if (phase === 'reserve' || phase === 'done') {
+        if (ORPHAN.test(d.text)) fixOrphan(); else judgeAfterDialog(isErr);
+      }
+      return;
+    }
+  }
+  function judgeAfterDialog(isErr) {
+    const my = epoch;
+    setTimeout(async () => {
+      if (my !== epoch || !(phase === 'reserve' || phase === 'done') || !rects.length) return;
+      let states = [];
+      try { states = lastT.map(seatState); } catch (_) {}
+      const n = states.length, kept = states.filter((x) => x === 'selected').length;
+      if (n && kept === n) {
+        if (isErr) {
+          attempts++;
+          log({ retry: attempts, why: 'same seats', seats: n });
+          phase = 'reserve'; reserveAt = performance.now();
+          reserveFast(my, { reserved: false }, performance.now());
+        } else log({ waiting: 'checkout', note: 'confirmation accepted' });
+        return;
+      }
+      if (!n) { if (isErr) rearm('dialog'); return; }
+      for (let i = 0; i < lastT.length; i++) {
+        if (states[i] !== 'selected') continue;
+        const el = findAnyAt(lastT[i]);
+        if (el) { try { pressCenter(el); } catch (_) {} }
+      }
+      if (kept) await settle(20, 160);
+      if (my !== epoch) return;
+      rearm('seats released');
+    }, 250);
+  }
+  let dmo = null, dTimer = null;
+  function startDialogWatch() {
+    stopDialogWatch();
+    dmo = new MutationObserver(() => handleDialogs());
+    dmo.observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+    dTimer = setInterval(handleDialogs, 50);
+  }
+  function stopDialogWatch() { if (dmo) { dmo.disconnect(); dmo = null; } if (dTimer) { clearInterval(dTimer); dTimer = null; } }
+
+  function rearm(why) {
+    if (!rects.length || !engineOn()) return;
+    epoch++; attempts++;
+    orphanTries = 0;
+    armed = true; done = false; scanning = false; phase = 'scan';
+    boxEls.forEach((b) => { b.className = 'box armed'; });
+    log({ retry: attempts, why });
+    startWatch();
+    scan();
+  }
+
+  setInterval(() => {
+    if (blocked()) { onBlockedPage(); return; }
+    if (suspended) { suspended = false; announced = false; }
+  }, 120);
+  setInterval(() => {
+    if (blocked() || !st.on || !rects.length) return;
+    if (phase === 'scan' && armed) log({ scan: { boxes: rects.length, seats: lastStats.cands, need: st.qty } });
+    else if (phase === 'reserve') {
+      const sec = Math.round((performance.now() - reserveAt) / 1000);
+      log({ waiting: 'checkout', s: sec });
+    }
+  }, 1000);
+
+  function setPower(v) {
+    st.on = v; save();
+    log({ power: v ? 'on' : 'off' });
+    if (!v) clearBoxes(); else { primeAudio(); phase = 'idle'; }
+    if (ui) ui.render();
+  }
+  function setQty(n) { st.qty = n; save(); log({ quantity: n }); if (ui) ui.render(); }
+  function setMulti(v) { st.multi = v; save(); log({ mode: v ? 'multi' : 'single' }); if (ui) ui.render(); }
+  function resetSelections() {
+    clearBoxes();
+    try { sessionStorage.removeItem(RES_KEY); } catch (_) {}
+    log({ selections: 'cleared' });
+  }
+
+  if (blocked()) onBlockedPage();
+
+  if (window.__carterTest) window.__carterTestApi = { st, logs, state: () => ({ on: st.on, qty: st.qty, multi: st.multi, phase, boxes: rects.length }), setPower, setQty, setMulti, resetSelections, togglePopup };
+})();
