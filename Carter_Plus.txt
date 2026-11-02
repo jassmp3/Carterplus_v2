@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Carter+
 // @namespace    https://by-jass.carter-plus
-// @version      2.3.0
-// @description  carter+ by jass: ctrl + drag a box over seats or checkboxes, pick a quantity, it selects them and hits reserve
+// @version      2.4.1
+// @description  carter+ by jass: ctrl + drag a box over seats or checkboxes, it selects them and hits reserve (smart mode or select+ mode)
 // @author       Jass
 // @match        https://www.ticketmaster.com/*
 // @match        https://www.ticketmaster.ca/*
@@ -20,7 +20,7 @@
   if (window.__carterPlusLoaded) return;
   window.__carterPlusLoaded = true;
 
-  const TAB_KEY = 'carter_plus_tab';
+  const TAB_KEY = 'carter_plus_tab2';
   const RES_KEY = 'carter_plus_reserved';
   const BLOCK = /checkout|authori[sz]ation/i;
   const blocked = () => BLOCK.test(location.href);
@@ -28,9 +28,11 @@
   const hasMod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
   const median = (a) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
 
-  const st = { on: false, qty: 2, multi: false };
+  const st = { on: true, qty: 2, multi: false, mode: 'select' };
   try { Object.assign(st, JSON.parse(sessionStorage.getItem(TAB_KEY) || '{}')); } catch (_) {}
-  const save = () => { try { sessionStorage.setItem(TAB_KEY, JSON.stringify({ on: st.on, qty: st.qty, multi: st.multi })); } catch (_) {} };
+  if (st.mode !== 'smart' && st.mode !== 'select') st.mode = 'select';
+  if (st.mode === 'select') st.multi = false;
+  const save = () => { try { sessionStorage.setItem(TAB_KEY, JSON.stringify({ on: st.on, qty: st.qty, multi: st.multi, mode: st.mode })); } catch (_) {} };
 
   const h = (tag, props, ...kids) => {
     const e = document.createElement(tag);
@@ -90,9 +92,12 @@
     .sw.on { background: #063d16; box-shadow: 0 0 12px rgba(57,255,106,.75); }
     .sw.on::after { transform: translateX(20px); background: #39ff6a; box-shadow: 0 0 9px #39ff6a; }
     .sw:not(.on) { border-color: #1b6b30; }
-    .q { cursor: pointer; min-width: 36px; text-align: center; color: #b9ff5a; border: 1px solid rgba(57,255,106,.55); border-radius: 5px; background: #021a08; padding: 0 8px; font: inherit; text-shadow: 0 0 6px rgba(185,255,90,.7); transition: box-shadow .2s, transform .12s; }
+    .q { cursor: pointer; min-width: 36px; text-align: center; color: #b9ff5a; border: 1px solid rgba(57,255,106,.55); border-radius: 5px; background: #021a08; padding: 0 8px; font: inherit; text-shadow: 0 0 6px rgba(185,255,90,.7); transition: box-shadow .2s, transform .12s, opacity .2s; }
     .q:hover { box-shadow: 0 0 10px rgba(57,255,106,.6); }
     .q:active { transform: scale(.92); }
+    .q.off { opacity: .32; cursor: not-allowed; text-shadow: none; border-color: rgba(57,255,106,.25); color: #2a7a40; }
+    .q.off:hover { box-shadow: none; }
+    .q.off:active { transform: none; }
     .log { margin-top: 10px; height: 214px; box-sizing: border-box; padding: 8px 9px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end;
       border: 1px solid rgba(57,255,106,.35); border-radius: 7px; background: #010a03; box-shadow: inset 0 0 14px rgba(57,255,106,.1);
       font-size: 10.5px; line-height: 1.45; text-shadow: 0 0 4px rgba(57,255,106,.5); }
@@ -114,12 +119,13 @@
     const reset = h('button', { class: 'rst', title: 'reset selections', text: '\u21bb' });
     const head = h('div', { class: 'head' }, h('div', {}, h('div', { class: 'title', text: '_carter+' }), h('div', { class: 'by', text: 'by_jass' })), reset);
     const sw = h('div', { class: 'sw', role: 'switch', tabindex: '0' });
-    const q = h('button', { class: 'q' });
     const mode = h('button', { class: 'q' });
+    const q = h('button', { class: 'q' });
+    const type = h('button', { class: 'q' });
     const row = (k, ctl) => h('div', { class: 'line' }, h('span', { class: 'ind', text: '  ' }), h('span', { class: 'k', text: '"' + k + '":' }), ctl, h('span', { class: 'p', text: ',' }));
     const code = h('div', { class: 'code' },
       h('div', { class: 'line' }, h('span', { class: 'p', text: '{' })),
-      row('power', sw), row('quantity', q), row('mode', mode),
+      row('power', sw), row('mode', mode), row('quantity', q), row('type', type),
       h('div', { class: 'line' }, h('span', { class: 'p', text: '}' }))
     );
     const logEl = h('div', { class: 'log' });
@@ -129,8 +135,9 @@
 
     sw.addEventListener('click', () => setPower(!st.on));
     sw.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setPower(!st.on); } });
+    mode.addEventListener('click', () => setMode(st.mode === 'select' ? 'smart' : 'select'));
     q.addEventListener('click', () => setQty(st.qty >= 10 ? 1 : st.qty + 1));
-    mode.addEventListener('click', () => setMulti(!st.multi));
+    type.addEventListener('click', () => { if (st.mode === 'select') return; setMulti(!st.multi); });
     reset.addEventListener('click', resetSelections);
 
     let drag = null;
@@ -156,8 +163,11 @@
     function render() {
       sw.classList.toggle('on', st.on);
       sw.setAttribute('aria-checked', String(st.on));
+      mode.textContent = st.mode === 'select' ? 'select+' : 'smart';
       q.textContent = String(st.qty);
-      mode.textContent = st.multi ? 'multi' : 'single';
+      type.textContent = st.multi ? 'multi' : 'single';
+      type.classList.toggle('off', st.mode === 'select');
+      type.setAttribute('aria-disabled', String(st.mode === 'select'));
     }
     logs.slice(-40).forEach(addLine);
     ui = { host, card, render, addLine, toggle() { card.hidden = !card.hidden; render(); }, hide() { card.hidden = true; } };
@@ -224,7 +234,7 @@
   function onBlockedPage() {
     if (!suspended) {
       suspended = true;
-      clearBoxes(); stopWatch(); stopDialogWatch();
+      clearBoxes(); stopWatch(); stopDialogWatch(); dropSelect();
       if (ui) ui.hide();
     }
     if (!announced && takeReservedFlag()) {
@@ -239,7 +249,10 @@
     .box.armed{animation:pulse 1.3s ease-in-out infinite}
     .box.flash{animation:flash .6s ease-out}
     @keyframes pulse{50%{box-shadow:0 0 2px #ff2a1a,0 0 8px rgba(255,50,20,.55),0 0 18px rgba(255,90,20,.25),inset 0 0 8px rgba(255,40,20,.25)}}
-    @keyframes flash{0%{background:rgba(255,230,200,.5);box-shadow:0 0 6px #fff,0 0 34px #ff5a1a}100%{}}`;
+    @keyframes flash{0%{background:rgba(255,230,200,.5);box-shadow:0 0 6px #fff,0 0 34px #ff5a1a}100%{}}
+    .box.sel{border-color:#0b2fc9;background:rgba(11,47,201,.16);box-shadow:0 0 4px #0b2fc9,0 0 14px rgba(25,70,255,.75),0 0 30px rgba(20,60,200,.35),inset 0 0 14px rgba(11,47,201,.4)}
+    .box.sel.flash{animation:flashb .6s ease-out}
+    @keyframes flashb{0%{background:rgba(200,220,255,.5);box-shadow:0 0 6px #fff,0 0 34px #1a50ff}100%{}}`;
   let boxHost = null, boxRoot = null;
   function ensureBoxHost() {
     if (!boxHost) {
@@ -256,10 +269,15 @@
   let sx = 0, sy = 0, cx = 0, cy = 0, styleEl = null, swallowUntil = 0, held = false, lastInput = 0;
   let phase = 'idle', reserveAt = 0, attempts = 0, lastT = [];
   let fixing = false, orphanTries = 0;
+  let modDown = false, pend = false;
+  const pickedKeys = new Set();
   const lastStats = { cands: 0 };
   const px = (e) => e.clientX + window.scrollX;
   const py = (e) => e.clientY + window.scrollY;
   const engineOn = () => st.on && !blocked();
+  const multiOn = () => st.mode === 'smart' && st.multi;
+  const keyOf = (x, y) => Math.round((x + window.scrollX) / 6) + ':' + Math.round((y + window.scrollY) / 6);
+  function dropSelect() { pend = false; pickedKeys.clear(); }
 
   function place(el, r) {
     if (!el || !r) return;
@@ -290,15 +308,16 @@
     block(e);
     primeAudio();
     ensureBoxHost();
+    modDown = true;
     const X = px(e), Y = py(e);
-    if (st.multi) {
+    if (multiOn()) {
       if (rects.some((r) => X >= r.l && X <= r.r && Y >= r.t && Y <= r.b)) { log({ selection: 'ignored', why: 'starts inside an existing box' }); return; }
     } else if (rects.length) clearBoxes();
     dragging = true;
     sx = cx = X; sy = cy = Y;
     try { document.getSelection().removeAllRanges(); } catch (_) {}
     injectStyle();
-    curBox = h('div', { class: 'box' });
+    curBox = h('div', { class: st.mode === 'select' ? 'box sel' : 'box' });
     boxRoot.appendChild(curBox);
     drawDrag();
   }
@@ -321,8 +340,15 @@
     curRect = null; curBox = null;
     if (rects.some((o) => overlap(r, o))) { el.remove(); log({ selection: 'ignored', why: 'overlaps an existing box' }); return; }
     rects.push(r); boxEls.push(el);
-    el.className = 'box armed';
     log({ selection: 'created', id: rects.length, size: Math.round(r.r - r.l) + 'x' + Math.round(r.b - r.t), boxes: rects.length });
+    if (st.mode === 'select') {
+      el.className = 'box sel';
+      pend = true;
+      startDialogWatch();
+      if (!modDown) commitSelect();
+      return;
+    }
+    el.className = 'box armed';
     if (phase === 'idle' || phase === 'scan' || phase === 'done' || phase === 'off') { armed = true; done = false; phase = 'scan'; attempts = 0; startWatch(); }
     startDialogWatch();
     scan();
@@ -351,7 +377,13 @@
   window.addEventListener('click', onClick, o);
   ['contextmenu', 'dragstart', 'selectstart', 'dragenter', 'dragover'].forEach((t) => window.addEventListener(t, onGuard, o));
   window.addEventListener('keydown', onKey, o);
-  window.addEventListener('blur', () => { held = false; cancelDrag(); });
+  window.addEventListener('keyup', (e) => {
+    if (!(IS_MAC ? e.key === 'Meta' : e.key === 'Control')) return;
+    modDown = false;
+    if (st.mode !== 'select' || !engineOn()) return;
+    if (dragging) finishDrag(); else commitSelect();
+  }, true);
+  window.addEventListener('blur', () => { held = false; modDown = false; cancelDrag(); });
 
   const STRONG = 'input[type=checkbox],input[type=radio],input[type=button],input[type=submit],input[type=reset],button,summary,a[href],[role=checkbox],[role=radio],[role=button],[role=switch],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=tab],[role=link],[aria-checked],[aria-pressed]';
   const WEAK = 'label,[data-seat],[data-seat-id],[data-seatid],[class*="seat" i],[onclick]';
@@ -695,6 +727,30 @@
     return out;
   }
 
+  function commitSelect() {
+    if (!pend || st.mode !== 'select' || !engineOn()) return;
+    pend = false;
+    const my = epoch, t0 = performance.now();
+    let items = [];
+    try {
+      const vs = viewRects();
+      if (vs.length) items = scanRegion(vs).filter((i) => i.cand && !pickedKeys.has(keyOf(i.x, i.y)));
+    } catch (_) {}
+    if (!items.length) { clearBoxes(); log({ selection: 'empty', why: 'no seats under the box' }); return; }
+    items.forEach((i) => pickedKeys.add(keyOf(i.x, i.y)));
+    const T = makeTargets(items);
+    lastT = T;
+    orphanTries = 0;
+    phase = 'select'; done = true; armed = false;
+    captureAfter(T);
+    for (const t of T) fireTarget(t, false);
+    log({ selected: T.length, ms: Math.round(performance.now() - t0), mode: 'select+' });
+    boxEls.forEach((b) => { b.className = 'box sel'; void b.offsetWidth; b.className = 'box sel flash'; setTimeout(() => { b.className = 'box sel'; }, 650); });
+    const ctl = { reserved: false };
+    verifySelect(T, my, ctl);
+    reserveFast(my, ctl, t0);
+  }
+
   let mo = null, timer = null, schedT = 0, lastScan = 0, retryT = 0, lastMut = 0;
   function startWatch() {
     stopWatch();
@@ -707,6 +763,7 @@
   function sched() { if (schedT) return; schedT = setTimeout(() => { schedT = 0; scan(); }, 0); }
 
   async function scan() {
+    if (st.mode !== 'smart') return;
     if (!armed || done || scanning || !engineOn() || !rects.length) return;
     const now = performance.now();
     if (held || now - lastInput < 140) { if (!retryT) retryT = setTimeout(() => { retryT = 0; scan(); }, 40); return; }
@@ -921,6 +978,7 @@
   function stopDialogWatch() { if (dmo) { dmo.disconnect(); dmo = null; } if (dTimer) { clearInterval(dTimer); dTimer = null; } }
 
   function rearm(why) {
+    if (st.mode !== 'smart') { log({ released: why }); return; }
     if (!rects.length || !engineOn()) return;
     epoch++; attempts++;
     orphanTries = 0;
@@ -947,18 +1005,29 @@
   function setPower(v) {
     st.on = v; save();
     log({ power: v ? 'on' : 'off' });
-    if (!v) clearBoxes(); else { primeAudio(); phase = 'idle'; }
+    if (!v) { clearBoxes(); dropSelect(); } else { primeAudio(); phase = 'idle'; }
+    if (ui) ui.render();
+  }
+  function setMode(v) {
+    st.mode = v;
+    if (v === 'select') st.multi = false;
+    save();
+    clearBoxes(); dropSelect();
+    log({ mode: v === 'select' ? 'select+' : 'smart' });
     if (ui) ui.render();
   }
   function setQty(n) { st.qty = n; save(); log({ quantity: n }); if (ui) ui.render(); }
-  function setMulti(v) { st.multi = v; save(); log({ mode: v ? 'multi' : 'single' }); if (ui) ui.render(); }
+  function setMulti(v) {
+    if (st.mode === 'select') return;
+    st.multi = v; save(); log({ type: v ? 'multi' : 'single' }); if (ui) ui.render();
+  }
   function resetSelections() {
-    clearBoxes();
+    clearBoxes(); dropSelect();
     try { sessionStorage.removeItem(RES_KEY); } catch (_) {}
     log({ selections: 'cleared' });
   }
 
   if (blocked()) onBlockedPage();
 
-  if (window.__carterTest) window.__carterTestApi = { st, logs, state: () => ({ on: st.on, qty: st.qty, multi: st.multi, phase, boxes: rects.length }), setPower, setQty, setMulti, resetSelections, togglePopup };
+  if (window.__carterTest) window.__carterTestApi = { st, logs, state: () => ({ on: st.on, qty: st.qty, multi: st.multi, mode: st.mode, phase, boxes: rects.length }), setPower, setMode, setQty, setMulti, resetSelections, togglePopup };
 })();
