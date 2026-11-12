@@ -1,8 +1,9 @@
+
 // ==UserScript==
 // @name         Carter+
 // @namespace    https://by-jass.carter-plus
-// @version      2.4.1
-// @description  carter+ by jass: ctrl + drag a box over seats or checkboxes, it selects them and hits reserve (smart mode or select+ mode)
+// @version      2.6.0
+// @description  carter+ by jass: ctrl + drag a box (or draw a pen line) over seats or checkboxes, it selects them and hits reserve (smart mode or select+ mode)
 // @author       Jass
 // @match        https://www.ticketmaster.com/*
 // @match        https://www.ticketmaster.ca/*
@@ -14,12 +15,12 @@
 // @noframes
 // @grant        none
 // ==/UserScript==
-
+ 
 (function () {
   'use strict';
   if (window.__carterPlusLoaded) return;
   window.__carterPlusLoaded = true;
-
+ 
   const TAB_KEY = 'carter_plus_tab2';
   const RES_KEY = 'carter_plus_reserved';
   const BLOCK = /checkout|authori[sz]ation/i;
@@ -27,13 +28,14 @@
   const IS_MAC = /Mac|iPhone|iPad/i.test(navigator.platform || '');
   const hasMod = (e) => (IS_MAC ? e.metaKey : e.ctrlKey);
   const median = (a) => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
-
-  const st = { on: true, qty: 2, multi: false, mode: 'select' };
+ 
+  const st = { on: true, qty: 2, multi: false, mode: 'select', tool: 'box' };
   try { Object.assign(st, JSON.parse(sessionStorage.getItem(TAB_KEY) || '{}')); } catch (_) {}
   if (st.mode !== 'smart' && st.mode !== 'select') st.mode = 'select';
+  if (st.tool !== 'pen' && st.tool !== 'box') st.tool = 'box';
   if (st.mode === 'select') st.multi = false;
-  const save = () => { try { sessionStorage.setItem(TAB_KEY, JSON.stringify({ on: st.on, qty: st.qty, multi: st.multi, mode: st.mode })); } catch (_) {} };
-
+  const save = () => { try { sessionStorage.setItem(TAB_KEY, JSON.stringify({ on: st.on, qty: st.qty, multi: st.multi, mode: st.mode, tool: st.tool })); } catch (_) {} };
+ 
   const h = (tag, props, ...kids) => {
     const e = document.createElement(tag);
     for (const k in props || {}) { if (k === 'text') e.textContent = props[k]; else e.setAttribute(k, props[k]); }
@@ -57,7 +59,7 @@
   };
   const parentOf = (el) => { if (el.parentElement) return el.parentElement; const r = el.getRootNode && el.getRootNode(); return r && r.host ? r.host : null; };
   function* walk(r) { for (const el of r.querySelectorAll('*')) { yield el; if (el.shadowRoot) yield* walk(el.shadowRoot); } }
-
+ 
   const logs = [];
   let ui = null;
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -68,7 +70,7 @@
     if (logs.length > 80) logs.shift();
     if (ui) ui.addLine(line);
   }
-
+ 
   const UI_CSS = `
     :host { all: initial; }
     .card { position: fixed; top: 8px; right: 8px; width: 344px; box-sizing: border-box; padding: 14px 16px 12px; background: #000; color: #39ff6a;
@@ -132,14 +134,14 @@
     const foot = h('div', { class: 'foot' }, '// shift+alt to hide', h('span', { class: 'caret', text: '_' }));
     card.append(head, code, logEl, foot);
     root.append(card);
-
+ 
     sw.addEventListener('click', () => setPower(!st.on));
     sw.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setPower(!st.on); } });
     mode.addEventListener('click', () => setMode(st.mode === 'select' ? 'smart' : 'select'));
     q.addEventListener('click', () => setQty(st.qty >= 10 ? 1 : st.qty + 1));
-    type.addEventListener('click', () => { if (st.mode === 'select') return; setMulti(!st.multi); });
+    type.addEventListener('click', () => { if (st.mode === 'select') setTool(st.tool === 'pen' ? 'box' : 'pen'); else setMulti(!st.multi); });
     reset.addEventListener('click', resetSelections);
-
+ 
     let drag = null;
     head.addEventListener('pointerdown', (e) => {
       if (e.target === reset) return;
@@ -152,7 +154,7 @@
       card.style.right = 'auto'; card.style.left = Math.max(0, e.clientX - drag.dx) + 'px'; card.style.top = Math.max(0, e.clientY - drag.dy) + 'px';
     });
     head.addEventListener('pointerup', () => { drag = null; });
-
+ 
     function addLine(text) {
       const d = h('div', { class: 'l', text: text.replace(/,/g, ',\u200b') });
       if (/"(selected|reserve|dialog|alarm|found|orphan)"/.test(text)) d.className = 'l hi';
@@ -165,9 +167,7 @@
       sw.setAttribute('aria-checked', String(st.on));
       mode.textContent = st.mode === 'select' ? 'select+' : 'smart';
       q.textContent = String(st.qty);
-      type.textContent = st.multi ? 'multi' : 'single';
-      type.classList.toggle('off', st.mode === 'select');
-      type.setAttribute('aria-disabled', String(st.mode === 'select'));
+      type.textContent = st.mode === 'select' ? (st.tool === 'pen' ? 'pen' : 'selection') : (st.multi ? 'multi' : 'single');
     }
     logs.slice(-40).forEach(addLine);
     ui = { host, card, render, addLine, toggle() { card.hidden = !card.hidden; render(); }, hide() { card.hidden = true; } };
@@ -180,7 +180,7 @@
     else if (!ui.host.isConnected) document.documentElement.appendChild(ui.host);
     ui.toggle();
   }
-
+ 
   let chordDirty = false;
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Shift' || e.key === 'Alt') {
@@ -188,7 +188,7 @@
     } else if (e.shiftKey || e.altKey) chordDirty = true;
   }, true);
   window.addEventListener('keyup', (e) => { if (!e.shiftKey && !e.altKey) chordDirty = false; }, true);
-
+ 
   let audio = null;
   function primeAudio() {
     try {
@@ -229,7 +229,7 @@
     if (/^carter_\d+$/.test(window.name || '')) { try { window.name = ''; } catch (_) {} }
     return t && Date.now() - t < 10 * 60 * 1000;
   }
-
+ 
   let suspended = false, announced = false;
   function onBlockedPage() {
     if (!suspended) {
@@ -243,7 +243,7 @@
       siren();
     }
   }
-
+ 
   const BOX_CSS = `.box{position:absolute;box-sizing:border-box;border:1.5px solid #ff2a1a;border-radius:3px;background:rgba(255,40,20,.10);pointer-events:none;
     box-shadow:0 0 4px #ff2a1a,0 0 14px rgba(255,50,20,.75),0 0 30px rgba(255,90,20,.35),inset 0 0 14px rgba(255,40,20,.35)}
     .box.armed{animation:pulse 1.3s ease-in-out infinite}
@@ -252,7 +252,13 @@
     @keyframes flash{0%{background:rgba(255,230,200,.5);box-shadow:0 0 6px #fff,0 0 34px #ff5a1a}100%{}}
     .box.sel{border-color:#0b2fc9;background:rgba(11,47,201,.16);box-shadow:0 0 4px #0b2fc9,0 0 14px rgba(25,70,255,.75),0 0 30px rgba(20,60,200,.35),inset 0 0 14px rgba(11,47,201,.4)}
     .box.sel.flash{animation:flashb .6s ease-out}
-    @keyframes flashb{0%{background:rgba(200,220,255,.5);box-shadow:0 0 6px #fff,0 0 34px #1a50ff}100%{}}`;
+    @keyframes flashb{0%{background:rgba(200,220,255,.5);box-shadow:0 0 6px #fff,0 0 34px #1a50ff}100%{}}
+    .pen{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none}
+    .pen svg{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible}
+    .pen path{fill:none;stroke:#0b2fc9;stroke-width:12;stroke-linecap:round;stroke-linejoin:round;opacity:.6;
+      filter:drop-shadow(0 0 3px #0b2fc9) drop-shadow(0 0 12px rgba(25,70,255,.75))}
+    .pen.flash path{animation:flashp .6s ease-out}
+    @keyframes flashp{0%{stroke:#c8dcff;opacity:.95}100%{}}`;
   let boxHost = null, boxRoot = null;
   function ensureBoxHost() {
     if (!boxHost) {
@@ -263,22 +269,26 @@
     }
     if (!boxHost.isConnected) document.documentElement.appendChild(boxHost);
   }
-
+ 
+  const PEN_R = 6;
   let epoch = 0, rects = [], boxEls = [], curRect = null, curBox = null;
   let armed = false, done = false, scanning = false, dragging = false;
   let sx = 0, sy = 0, cx = 0, cy = 0, styleEl = null, swallowUntil = 0, held = false, lastInput = 0;
   let phase = 'idle', reserveAt = 0, attempts = 0, lastT = [];
   let fixing = false, orphanTries = 0;
   let modDown = false, pend = false;
+  let stroke = null;
+  const strokes = [];
   const pickedKeys = new Set();
   const lastStats = { cands: 0 };
   const px = (e) => e.clientX + window.scrollX;
   const py = (e) => e.clientY + window.scrollY;
   const engineOn = () => st.on && !blocked();
   const multiOn = () => st.mode === 'smart' && st.multi;
+  const penOn = () => st.mode === 'select' && st.tool === 'pen';
   const keyOf = (x, y) => Math.round((x + window.scrollX) / 6) + ':' + Math.round((y + window.scrollY) / 6);
   function dropSelect() { pend = false; pickedKeys.clear(); }
-
+ 
   function place(el, r) {
     if (!el || !r) return;
     const t = el.style;
@@ -288,6 +298,7 @@
     epoch++; armed = false; done = false; scanning = false; phase = st.on ? 'idle' : 'off';
     orphanTries = 0;
     rects = []; boxEls.forEach((e) => e.remove()); boxEls = [];
+    strokes.length = 0; stroke = null;
     if (curBox) { curBox.remove(); curBox = null; }
     curRect = null;
     stopWatch(); stopDialogWatch();
@@ -300,7 +311,23 @@
   const removeStyle = () => { if (styleEl) { styleEl.remove(); styleEl = null; } };
   const block = (e) => { e.preventDefault(); e.stopImmediatePropagation(); };
   const overlap = (a, b) => !(a.r < b.l || a.l > b.r || a.b < b.t || a.t > b.b);
-
+ 
+  function penEl() {
+    const NS = 'http://www.w3.org/2000/svg';
+    const wrap = h('div', { class: 'pen sel' });
+    const svg = document.createElementNS(NS, 'svg');
+    svg.appendChild(document.createElementNS(NS, 'path'));
+    wrap.appendChild(svg);
+    return wrap;
+  }
+  function drawPen() {
+    if (!curBox || !stroke) return;
+    let d = 'M' + stroke[0].x + ' ' + stroke[0].y;
+    if (stroke.length === 1) d += 'L' + (stroke[0].x + 0.1) + ' ' + stroke[0].y;
+    for (let i = 1; i < stroke.length; i++) d += 'L' + stroke[i].x + ' ' + stroke[i].y;
+    curBox.querySelector('path').setAttribute('d', d);
+  }
+ 
   function onDown(e) {
     if (!e.isTrusted) return;
     if (dragging) { block(e); return; }
@@ -310,13 +337,22 @@
     ensureBoxHost();
     modDown = true;
     const X = px(e), Y = py(e);
-    if (multiOn()) {
+    if (penOn()) {
+      if (!pend && rects.length) clearBoxes();
+    } else if (multiOn()) {
       if (rects.some((r) => X >= r.l && X <= r.r && Y >= r.t && Y <= r.b)) { log({ selection: 'ignored', why: 'starts inside an existing box' }); return; }
     } else if (rects.length) clearBoxes();
     dragging = true;
     sx = cx = X; sy = cy = Y;
     try { document.getSelection().removeAllRanges(); } catch (_) {}
     injectStyle();
+    if (penOn()) {
+      stroke = [{ x: X, y: Y }];
+      curBox = penEl();
+      boxRoot.appendChild(curBox);
+      drawPen();
+      return;
+    }
     curBox = h('div', { class: st.mode === 'select' ? 'box sel' : 'box' });
     boxRoot.appendChild(curBox);
     drawDrag();
@@ -326,16 +362,57 @@
     if (!dragging || !e.isTrusted) return;
     block(e);
     if (e.buttons === 0) { finishDrag(); return; }
-    cx = px(e); cy = py(e); drawDrag();
+    cx = px(e); cy = py(e);
+    if (penOn()) {
+      if (!stroke) return;
+      const last = stroke[stroke.length - 1];
+      if (Math.hypot(cx - last.x, cy - last.y) >= 2) { stroke.push({ x: cx, y: cy }); drawPen(); }
+      return;
+    }
+    drawDrag();
   }
   function onUp(e) {
     if (!e.isTrusted) return;
-    if (dragging) { block(e); if (e.button === 0) { cx = px(e); cy = py(e); finishDrag(); } return; }
+    if (dragging) {
+      block(e);
+      if (e.button === 0) {
+        cx = px(e); cy = py(e);
+        if (penOn() && stroke) {
+          const last = stroke[stroke.length - 1];
+          if (Math.hypot(cx - last.x, cy - last.y) >= 2) stroke.push({ x: cx, y: cy });
+        }
+        finishDrag();
+      }
+      return;
+    }
     if (Date.now() < swallowUntil) block(e);
+  }
+  function finishPen() {
+    const el = curBox, pts = stroke;
+    curBox = null; stroke = null;
+    if (!el || !pts) return;
+    drawStrokeFinal(el, pts);
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    for (const p of pts) { if (p.x < l) l = p.x; if (p.x > r) r = p.x; if (p.y < t) t = p.y; if (p.y > b) b = p.y; }
+    strokes.push(pts);
+    rects.push({ l: l - PEN_R, t: t - PEN_R, r: r + PEN_R, b: b + PEN_R });
+    boxEls.push(el);
+    log({ selection: 'created', id: rects.length, pts: pts.length, strokes: strokes.length });
+    pend = true;
+    startDialogWatch();
+    if (!modDown) commitSelect();
+  }
+  function drawStrokeFinal(el, pts) {
+    let d = 'M' + pts[0].x + ' ' + pts[0].y;
+    if (pts.length === 1) d += 'L' + (pts[0].x + 0.1) + ' ' + pts[0].y;
+    for (let i = 1; i < pts.length; i++) d += 'L' + pts[i].x + ' ' + pts[i].y;
+    el.querySelector('path').setAttribute('d', d);
   }
   function finishDrag() {
     dragging = false; swallowUntil = Date.now() + 150;
-    removeStyle(); drawDrag();
+    removeStyle();
+    if (penOn()) { finishPen(); return; }
+    drawDrag();
     const r = curRect, el = curBox;
     curRect = null; curBox = null;
     if (rects.some((o) => overlap(r, o))) { el.remove(); log({ selection: 'ignored', why: 'overlaps an existing box' }); return; }
@@ -357,7 +434,7 @@
     if (!dragging) return;
     dragging = false; removeStyle();
     if (curBox) { curBox.remove(); curBox = null; }
-    curRect = null;
+    curRect = null; stroke = null;
   }
   const onClick = (e) => { if (e.isTrusted && Date.now() < swallowUntil) block(e); };
   const onGuard = (e) => { if (dragging || Date.now() < swallowUntil) block(e); };
@@ -384,12 +461,12 @@
     if (dragging) finishDrag(); else commitSelect();
   }, true);
   window.addEventListener('blur', () => { held = false; modDown = false; cancelDrag(); });
-
+ 
   const STRONG = 'input[type=checkbox],input[type=radio],input[type=button],input[type=submit],input[type=reset],button,summary,a[href],[role=checkbox],[role=radio],[role=button],[role=switch],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=tab],[role=link],[aria-checked],[aria-pressed]';
   const WEAK = 'label,[data-seat],[data-seat-id],[data-seatid],[class*="seat" i],[onclick]';
   const TAKEN = /\b(selected|sold|taken|unavailable|disabled|occupied|reserved|booked|checked)\b/i;
   const PK = { span: 1.5, tol: 0.4, ang: 28, cons: 25, vote: 1.12 };
-
+ 
   function isAvailable(el) {
     if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
     if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio') && el.checked) return false;
@@ -398,7 +475,7 @@
     const cls = el.getAttribute('class');
     return !(cls && TAKEN.test(cls));
   }
-
+ 
   const NATIVE = /^(INPUT|BUTTON|A|SELECT|SUMMARY|LABEL|TEXTAREA)$/;
   const parseRGB = (v) => { const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/.exec(v || ''); return m ? { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] } : null; };
   function toHsl({ r, g, b }) {
@@ -432,7 +509,7 @@
     const { h: hh, s: ss } = toHsl(c);
     return ss >= 0.2 && hh >= 190 && hh <= 270;
   }
-
+ 
   function viewRects() {
     const out = [];
     for (const r of rects) {
@@ -497,7 +574,7 @@
     }
     return items;
   }
-
+ 
   const angDiff = (a, b) => { let d = Math.abs(a - b) % Math.PI; if (d > Math.PI / 2) d = Math.PI - d; return d; };
   function pick(raw, N, P) {
     const R = Math.PI / 180, items = [];
@@ -571,7 +648,7 @@
     return best.length === N + 1 ? best : best.slice(0, N);
   }
   const findGroup = (sels, N) => { const items = scanRegion(sels); return items.some((i) => i.cand) ? pick(items, N, PK) : null; };
-
+ 
   function press(el, x, y) {
     const base = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, screenX: x, screenY: y, button: 0 };
     const P = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
@@ -590,7 +667,7 @@
   }
   const pressCenter = (el) => { const r = el.getBoundingClientRect(); press(el, r.left + r.width / 2, r.top + r.height / 2); };
   const isLink = (el) => el.tagName === 'A' && el.hasAttribute('href');
-
+ 
   function settle(quiet, max) {
     return new Promise((res) => {
       let fin = false, t = 0;
@@ -636,7 +713,7 @@
     return best && bd <= Math.max(10, t.S * 0.7) ? best.el : null;
   }
   const isNativeCheck = (el) => el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio');
-
+ 
   function makeTargets(items) {
     return items.map((it) => {
       const el = it.el, tag = el.tagName, role = el.getAttribute('role');
@@ -669,7 +746,7 @@
       retry = lost();
     }
   }
-
+ 
   function isSelectedLike(el) {
     if (el.tagName === 'INPUT' && el.checked) return true;
     for (const a of ['aria-checked', 'aria-pressed', 'aria-selected']) if (el.getAttribute(a) === 'true') return true;
@@ -726,7 +803,22 @@
     }
     return out;
   }
-
+ 
+  function segDist(X, Y, a, b) {
+    const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
+    let t = L ? ((X - a.x) * dx + (Y - a.y) * dy) / L : 0;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(X - (a.x + t * dx), Y - (a.y + t * dy));
+  }
+  function onStroke(i) {
+    const X = i.x + window.scrollX, Y = i.y + window.scrollY, reach = PEN_R + Math.min(i.w, i.h) * 0.3;
+    return strokes.some((s) => {
+      if (s.length === 1) return Math.hypot(X - s[0].x, Y - s[0].y) <= reach;
+      for (let k = 1; k < s.length; k++) if (segDist(X, Y, s[k - 1], s[k]) <= reach) return true;
+      return false;
+    });
+  }
+ 
   function commitSelect() {
     if (!pend || st.mode !== 'select' || !engineOn()) return;
     pend = false;
@@ -734,9 +826,9 @@
     let items = [];
     try {
       const vs = viewRects();
-      if (vs.length) items = scanRegion(vs).filter((i) => i.cand && !pickedKeys.has(keyOf(i.x, i.y)));
+      if (vs.length) items = scanRegion(vs).filter((i) => i.cand && !pickedKeys.has(keyOf(i.x, i.y)) && (!strokes.length || onStroke(i)));
     } catch (_) {}
-    if (!items.length) { clearBoxes(); log({ selection: 'empty', why: 'no seats under the box' }); return; }
+    if (!items.length) { clearBoxes(); log({ selection: 'empty', why: penOn() ? 'no seats under the marker' : 'no seats under the box' }); return; }
     items.forEach((i) => pickedKeys.add(keyOf(i.x, i.y)));
     const T = makeTargets(items);
     lastT = T;
@@ -745,12 +837,12 @@
     captureAfter(T);
     for (const t of T) fireTarget(t, false);
     log({ selected: T.length, ms: Math.round(performance.now() - t0), mode: 'select+' });
-    boxEls.forEach((b) => { b.className = 'box sel'; void b.offsetWidth; b.className = 'box sel flash'; setTimeout(() => { b.className = 'box sel'; }, 650); });
+    boxEls.forEach((b) => { const c = b.classList.contains('pen') ? 'pen sel' : 'box sel'; b.className = c; void b.offsetWidth; b.className = c + ' flash'; setTimeout(() => { b.className = c; }, 650); });
     const ctl = { reserved: false };
     verifySelect(T, my, ctl);
     reserveFast(my, ctl, t0);
   }
-
+ 
   let mo = null, timer = null, schedT = 0, lastScan = 0, retryT = 0, lastMut = 0;
   function startWatch() {
     stopWatch();
@@ -761,7 +853,7 @@
   }
   function stopWatch() { if (mo) { mo.disconnect(); mo = null; } if (timer) { clearInterval(timer); timer = null; } }
   function sched() { if (schedT) return; schedT = setTimeout(() => { schedT = 0; scan(); }, 0); }
-
+ 
   async function scan() {
     if (st.mode !== 'smart') return;
     if (!armed || done || scanning || !engineOn() || !rects.length) return;
@@ -774,7 +866,7 @@
     let group = null;
     try { group = findGroup(vs, st.qty); } catch (_) { return; }
     if (!group) return;
-
+ 
     const t0 = performance.now(), my = epoch;
     scanning = true; armed = false; stopWatch(); phase = 'select';
     log({ found: group.length, need: st.qty });
@@ -790,7 +882,7 @@
       await Promise.race([new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))), sleep(60)]);
     }
     if (my !== epoch) { scanning = false; return; }
-
+ 
     let already = [];
     try { already = countSelected(viewRects()); } catch (_) {}
     if (already.length >= st.qty) {
@@ -812,7 +904,7 @@
     verifySelect(T, my, ctl);
     reserveFast(my, ctl, t0);
   }
-
+ 
   const RES_EXACT = /^(reserve( now)?|reserve (seats?|tickets?)|reserve selected( seats?| tickets?)?)$/i;
   function findReserve() {
     let best = null, bs = 0;
@@ -847,7 +939,7 @@
     phase = 'done';
     log({ reserve: sawDisabled ? 'button not ready' : 'button not found' });
   }
-
+ 
   const ORPHAN = /single seat|one seat|leav(e|ing) (a |1 )?(single |one )?seat|seats?.{0,25}(left|leaving) (open|empty|alone)|orphan/i;
   function fixOrphan() {
     if (fixing) return;
@@ -885,7 +977,7 @@
       } finally { fixing = false; }
     }, 250);
   }
-
+ 
   const DLG = '[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open],[class*="modal" i],[class*="dialog" i],[class*="popup" i],[class*="overlay" i],[data-testid*="modal" i],[data-testid*="dialog" i],[data-testid*="alert" i]';
   const OK_TIERS = [/^agree\s*(&|and)\s*continue$/, /^continue$/, /^agree$/, /^accept$/, /^ok(ay)?$/, /^got it$/, /^confirm$/, /^yes(,.*)?$/, /^submit$/, /^proceed$/, /^understood$|^i understand$/, /^try again$|^retry$/, /^close$|^dismiss$/];
   const LOOSE = [/agree/, /continue/, /\bok\b/, /accept/, /confirm/, /submit/, /close|dismiss/];
@@ -976,7 +1068,7 @@
     dTimer = setInterval(handleDialogs, 50);
   }
   function stopDialogWatch() { if (dmo) { dmo.disconnect(); dmo = null; } if (dTimer) { clearInterval(dTimer); dTimer = null; } }
-
+ 
   function rearm(why) {
     if (st.mode !== 'smart') { log({ released: why }); return; }
     if (!rects.length || !engineOn()) return;
@@ -988,7 +1080,7 @@
     startWatch();
     scan();
   }
-
+ 
   setInterval(() => {
     if (blocked()) { onBlockedPage(); return; }
     if (suspended) { suspended = false; announced = false; }
@@ -1001,7 +1093,7 @@
       log({ waiting: 'checkout', s: sec });
     }
   }, 1000);
-
+ 
   function setPower(v) {
     st.on = v; save();
     log({ power: v ? 'on' : 'off' });
@@ -1021,13 +1113,21 @@
     if (st.mode === 'select') return;
     st.multi = v; save(); log({ type: v ? 'multi' : 'single' }); if (ui) ui.render();
   }
+  function setTool(v) {
+    if (st.mode !== 'select') return;
+    st.tool = v; save();
+    clearBoxes(); dropSelect();
+    log({ type: v === 'pen' ? 'pen' : 'selection' });
+    if (ui) ui.render();
+  }
   function resetSelections() {
     clearBoxes(); dropSelect();
     try { sessionStorage.removeItem(RES_KEY); } catch (_) {}
     log({ selections: 'cleared' });
   }
-
+ 
   if (blocked()) onBlockedPage();
-
-  if (window.__carterTest) window.__carterTestApi = { st, logs, state: () => ({ on: st.on, qty: st.qty, multi: st.multi, mode: st.mode, phase, boxes: rects.length }), setPower, setMode, setQty, setMulti, resetSelections, togglePopup };
+ 
+  if (window.__carterTest) window.__carterTestApi = { st, logs, state: () => ({ on: st.on, qty: st.qty, multi: st.multi, mode: st.mode, tool: st.tool, phase, boxes: rects.length }), setPower, setMode, setQty, setMulti, setTool, resetSelections, togglePopup };
 })();
+ 
