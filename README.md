@@ -1,303 +1,288 @@
-# Carter+ --- README
+Carter+ --- README
 
-**Version:** 2.3.0\
-**Author:** Jass\
-**Script name:** Carter+\
-**Platform:** Tampermonkey\
-**Supported websites:** Ticketmaster domains listed below
+Version: 2.7.0
+Author: Jass
+Script name: Carter+
+Platform: Tampermonkey
+Supported websites: Ticketmaster domains listed below
 
-------------------------------------------------------------------------
+Overview
 
-## Overview
+Carter+ is a browser userscript created by Jass. It adds a compact control panel to supported Ticketmaster pages. When enabled, you Ctrl + drag over an area of the seat map (or ticket controls), and the script finds the available seats there, selects them, and attempts to activate the matching Reserve control.
 
-Carter+ is a browser userscript created by **Jass**. It adds a compact
-control panel to supported Ticketmaster pages. When enabled, you can
-draw a selection box over an area of the seat map or ticket controls.
-The script scans the selected area, attempts to identify available
-selectable items, selects according to the configured quantity, and
-attempts to activate the matching Reserve control.
+Carter+ has three modes, each with its own box colour and its own type options:
 
-Carter+ is an assistance tool. It does not guarantee that tickets will
-be available, selected, or reserved. Website layouts and booking flows
-can change at any time.
+Mode	Box colour	Best for	Type options
+select+	Blue	Selecting every available seat in an area, instantly	selection (drag box, default) / pen (marker line)
+smart	Red	Watching an area and grabbing a group of adjacent seats as soon as they appear	single / multi
+add+	Gold	Events where each seat opens a ticket-type panel and must be added one by one (presales, offer codes, multi-price seats)	best / cheaper
 
-## Features
+Carter+ is an assistance tool. It does not guarantee that tickets will be available, selected, or reserved. Website layouts and booking flows can change at any time.
 
--   Compact on-page control panel with a dark, green interface.
--   Adjustable selection quantity from 1 to 10.
--   Single-selection and multi-selection modes.
--   Box selection using a keyboard modifier and mouse drag.
--   Automatic scanning of the selected region.
--   Attempts to select matching available items and activate a Reserve
-    control.
--   Activity log displayed in the panel.
--   Reset control to clear the current selection boxes.
--   Panel can be moved by dragging its header.
--   Panel and settings state are retained for the current browser tab
-    session.
-
-## Supported websites
+Features
+Compact on-page control panel with a dark, green interface and a live activity log.
+Three working modes: select+, smart and add+.
+Adjustable quantity from 1 to 10.
+Box selection with a keyboard modifier and mouse drag, or a pen/marker line in select+ mode.
+Automatic scanning of the selected region (smart and add+).
+Automatic click on the Reserve control after selecting.
+Automatic handling of common confirmation dialogs, including the wheelchair/accessible "Agree & Continue" prompt.
+Single-seat protection: when a group of seats would leave one seat open, the script takes the extra seat too instead of leaving it orphaned.
+Add+ workflow that mimics the manual "select seat, choose ticket type, press Add" routine and then reserves.
+Audible siren alert when a reservation carries you to the checkout page.
+Reset control to clear the current boxes and strokes.
+Panel can be moved by dragging its header.
+Settings are retained for the current browser tab session.
+Supported websites
 
 The current script header matches these Ticketmaster domains:
 
--   `ticketmaster.com`
--   `ticketmaster.ca`
--   `ticketmaster.co.uk`
--   `ticketmaster.com.au`
--   `ticketmaster.de`
--   `ticketmaster.fr`
+ticketmaster.com
+ticketmaster.ca
+ticketmaster.co.uk
+ticketmaster.com.au
+ticketmaster.de
+ticketmaster.fr
 
-The script does not currently declare support for every Ticketmaster
-country domain. It is configured to run only on the domains listed
-above.
+The script does not declare support for every Ticketmaster country domain. It is configured to run only on the domains listed above.
 
-## Requirements
+Requirements
+A desktop browser that supports the Tampermonkey extension.
+Tampermonkey installed and enabled.
+The Carter+ userscript installed and enabled in Tampermonkey.
+A supported Ticketmaster page.
 
--   A desktop browser that supports the Tampermonkey extension.
--   Tampermonkey installed and enabled.
--   The Carter+ userscript installed and enabled in Tampermonkey.
--   A supported Ticketmaster page.
+The script is configured with @run-at document-start and does not request Tampermonkey privileged APIs (@grant none).
 
-The script is configured with `@run-at document-start` and does not
-request Tampermonkey privileged APIs (`@grant none`).
-
-------------------------------------------------------------------------
-
-## Installation
-
-### 1. Install Tampermonkey
-
-1.  Open the browser's extension store.
-2.  Search for **Tampermonkey** and install the official extension.
-3.  Pin the Tampermonkey icon to the browser toolbar if you want quick
-    access.
+Installation
+1. Install Tampermonkey
+Open the browser's extension store.
+Search for Tampermonkey and install the official extension.
+Pin the Tampermonkey icon to the browser toolbar if you want quick access.
 
 Useful links:
 
--   [Tampermonkey official website](https://www.tampermonkey.net/)
--   [Tampermonkey on the Chrome Web
-    Store](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
+Tampermonkey official website
+Tampermonkey on the Chrome Web Store
+2. Add Carter+ to Tampermonkey
+Open the Tampermonkey extension menu.
+Open Dashboard.
+Select Create a new script (the plus/new-script option).
+A script editor will open.
+Remove the default template code.
+Open the Carter+ .txt or .js source file in a text editor.
+Copy the entire script, including the userscript header at the very top (// ==UserScript==).
+Paste the complete code into the Tampermonkey editor.
+Save the script with Ctrl + S (or Cmd + S on macOS).
+Check that Carter+ appears in the Tampermonkey Dashboard and is enabled.
 
-### 2. Add Carter+ to Tampermonkey
+Important: Keep the userscript header intact. Tampermonkey uses its metadata, including @name and @match, to identify the script and the websites where it should run.
 
-1.  Open the Tampermonkey extension menu.
-2.  Open **Dashboard**.
-3.  Select **Create a new script** (the plus/new-script option).
-4.  A script editor will open.
-5.  Remove the default template code.
-6.  Open the Carter+ `.txt` or `.js` source file in a text editor.
-7.  Copy the entire script, including the userscript header at the very
-    top (`// ==UserScript==`).
-8.  Paste the complete code into the Tampermonkey editor.
-9.  Save the script with **Ctrl + S** (or **Cmd + S** on macOS).
-10. Check that Carter+ appears in the Tampermonkey Dashboard and is
-    enabled.
+Updating: To update from an older version, open the existing Carter+ script in the Dashboard, replace its whole contents with the new source, and save.
 
-**Important:** Keep the userscript header intact. Tampermonkey uses its
-metadata, including `@name` and `@match`, to identify the script and the
-websites where it should run.
-
-### 3. Open a supported Ticketmaster page
-
-1.  Navigate to one of the supported Ticketmaster domains.
-2.  Refresh the page after installing or changing the script.
-3.  If the panel does not appear immediately, use the panel shortcut
-    described below.
-
-------------------------------------------------------------------------
-
-## How to use Carter+
-
-### 1. Open or hide the control panel
+3. Open a supported Ticketmaster page
+Navigate to one of the supported Ticketmaster domains.
+Refresh the page after installing or changing the script.
+If the panel does not appear immediately, use the panel shortcut described below.
+The control panel
 
 Press:
 
--   **Windows / Linux:** `Shift + Alt`
--   **macOS:** `Shift + Option`
+Windows / Linux: Shift + Alt
+macOS: Shift + Option
 
-Press the same key combination again to toggle the panel. The panel is
-initially hidden.
+Press the same combination again to hide the panel. The panel is initially hidden, and it can be moved by dragging its header.
 
-The panel can be moved by dragging its header.
+The panel is laid out as a small settings block:
 
-### 2. Turn the script on
+Setting	What it does
+power	Switch that turns the script on or off. Defaults to on. Turning it off clears all boxes and strokes.
+mode	Click to cycle select+ → smart → add+ → select+.
+quantity	Click to cycle 1 → 2 → ... → 10 → 1. Used by smart and add+ (see the mode sections). Defaults to 2.
+type	Click to toggle the options for the current mode (see the table above).
+↻ (header button)	Clears all boxes, strokes and the reservation flag.
 
-In the panel, find **power** and click the switch to turn it on.
+Defaults on a fresh tab: power on, mode select+, type selection, quantity 2, add+ type best. Your choices are kept for the current browser tab session only.
 
--   **ON:** Carter+ can respond to the selection-box gesture.
--   **OFF:** The selection workflow is disabled and existing selection
-    boxes are cleared.
+Switching mode or type clears the boxes and strokes currently on screen.
 
-The script starts with power off by default.
+The selection gesture
 
-### 3. Set the quantity
+In every mode, selection starts with:
 
-Click the number beside **quantity** to cycle through the available
-values:
+Windows / Linux: hold Ctrl and drag with the left mouse button.
+macOS: hold Command (⌘) and drag with the left mouse button.
 
-`1 → 2 → 3 → ... → 10 → 1`
+Press Esc during a drag to cancel it. Make sure the relevant seats are visible on screen before you draw.
 
-Set the quantity to the number of seats or ticket items you want the
-script to look for in the selected area.
+Mode 1: select+ (blue)
 
-### 4. Choose a selection mode
+Select+ selects every available seat under your mark in one go, then clicks Reserve. The quantity setting is not used in this mode.
 
-Click the **mode** control to switch between:
+Type: selection (default)
+Hold Ctrl and drag a rectangle over the seats you want. The box is blue.
+When you release Ctrl (or the mouse, if Ctrl is already up), all available seats under the box are selected at once.
+The script verifies the clicks registered, retries any that did not, and clicks Reserve.
 
--   **single:** A new selection box replaces the previous selection box.
--   **multi:** You can create multiple separate selection boxes. The
-    script ignores a new box if it overlaps an existing one or starts
-    inside an existing box.
+Drawing a new box replaces the previous one.
 
-### 5. Draw a selection box
+Type: pen
+Hold Ctrl and draw a short marker line over the seats you want. The line glows blue.
+Any available seat the line passes over (or very close to) is picked. A single Ctrl + click picks one seat.
+You can draw several strokes while Ctrl stays held. Everything under all strokes is selected when you release Ctrl.
+The script then selects the seats and clicks Reserve, exactly as in selection type.
 
-1.  Make sure power is ON.
-2.  Set the quantity and mode.
-3.  Move the pointer to the area you want Carter+ to scan.
-4.  Hold **Ctrl** and drag the left mouse button to draw a rectangle
-    around the desired seats or ticket controls.
-5.  Release the mouse button to finish the box.
-6.  Carter+ scans the selected region and attempts the
-    selection/reservation workflow.
+The pen has no effect on seats the line merely passes near the next row over; draw along the row you want.
 
-On macOS, the script uses **Command (⌘)** instead of Ctrl for the
-selection-box gesture.
+Details common to both types
+Seats already picked in this session are skipped if you draw over them again, so you can add seats in batches. Use reset to clear that memory.
+If a single seat would be left open next to your selection and the site warns about it, the script adds the nearest extra seat and reserves again.
+Mode 2: smart (red)
 
-**Tip:** Draw a box around the intended selectable items, not the entire
-page. Make sure the relevant seats or ticket controls are visible before
-drawing.
+Smart mode watches the area you boxed and acts the moment enough seats are available.
 
-### 6. Read the activity log
+Set quantity to the number of seats you need.
+Hold Ctrl and drag a red box over the area.
+The box stays armed and pulses. The script keeps scanning inside it.
+As soon as a group of adjacent seats of your quantity appears, it selects them and clicks Reserve.
+If the site rejects the seats, a dialog appears, or the seats are released, the script re-arms the box and tries again.
+Type: single / multi
+single: a new box replaces the previous one.
+multi: you can keep several separate boxes at once. A new box is ignored if it overlaps an existing box or starts inside one.
+Single-seat protection
 
-The panel displays status messages as the script works. Messages may
-indicate that a selection box was created, a scan is running, items were
-selected, a Reserve control was clicked, or the script is waiting for
-the next page state.
+If the best group of adjacent seats would leave exactly one seat open next to your quantity (for example you want 2 and a run of 3 appears), the script takes all 3 rather than leaving the single seat stranded.
 
-The log is diagnostic feedback; it is not confirmation that a booking
-has been completed.
+Mode 3: add+ (gold)
 
-### 7. Reset the selection
+Add+ is for events where the seat map cannot be bulk-selected because each seat opens a ticket-type panel (for example presales, venue codes, offers, or seats with several price options). Normally you would:
 
-Click the **reset** button (the circular arrow in the panel header) to
-clear the current selection boxes and reset the reservation flag used by
-the script.
+Select one seat.
+The side panel opens with the ticket types. Press Add.
+Back on the map, select the next seat and press Add again.
+When you have all your seats, press Reserve Tickets.
 
-------------------------------------------------------------------------
+Add+ does exactly that, automatically.
 
-## Important behavior and limitations
+How to use it
+Switch mode to add+.
+Set quantity and choose the type (best or cheaper).
+Hold Ctrl and drag a gold box over the area. The box stays armed until the work is done.
+When seats appear under the box, add+ takes over:
+finds a group of adjacent seats of your quantity (with the same single-seat protection as smart mode),
+clicks the first seat and waits for the ticket-type panel,
+applies the chosen type (below) and presses Add,
+waits for the map to come back, then repeats for the next seat,
+finally presses Reserve Tickets.
+Type: best
 
--   Carter+ is configured for the Ticketmaster domains listed in this
-    README only.
--   The script attempts to identify selectable elements from the page.
-    Ticketmaster may change its page structure, seat map, controls, or
-    booking flow, which can affect detection.
--   The script can only act on items that the page exposes as selectable
-    and that are detected as available.
--   A Reserve-button click is not proof of a successful reservation.
-    Always check the website's own confirmation and checkout status.
--   The script suspends its selection workflow on URLs containing
-    checkout or authorization, and hides its panel on those pages.
--   The script does not guarantee a particular seat, price, quantity, or
-    successful checkout.
--   Do not use the script to bypass queues, access controls, purchase
-    limits, CAPTCHA, anti-bot systems, or other website protections.
--   Use only where you are authorized to test or interact with the site,
-    and follow Ticketmaster's terms and all applicable laws and event
-    rules.
+Presses Add on every seat, whatever price option is currently selected in the panel. This suits events where the panel already defaults to the option you want (for example the code price).
 
-## Troubleshooting
+Type: cheaper
 
-### The panel does not appear
+Reads the prices of the ticket-type options in the panel, selects the cheapest one (if it is not already selected), and then presses Add. It does this for every seat.
 
-1.  Confirm Tampermonkey is installed and enabled.
-2.  Confirm Carter+ is enabled in the Tampermonkey Dashboard.
-3.  Confirm you are on one of the supported Ticketmaster domains.
-4.  Refresh the page.
-5.  Press `Shift + Alt` (or `Shift + Option` on macOS).
+Recovery behaviour
+If a seat click does not open the panel, the script retries the click a couple of times.
+If a seat cannot be added, the script re-scans and only looks for the remaining number of seats, keeping the ones already added.
+If the site shows the single-seat warning after Reserve, the script adds the nearest extra seat through the same select-and-Add routine and reserves again.
+If some seats are dropped after Reserve, it keeps the ones still held and adds only the missing ones.
+After repeated failed attempts it stops and logs that it gave up.
 
-### Ctrl + drag does nothing
+In add+ mode the ticket-selection side panel is protected from the script's dialog-closing helper, so the panel is not closed before Add is pressed.
 
-1.  Open the panel and turn **power** ON.
-2.  Confirm the page has finished loading the seat map or ticket
-    controls.
-3.  Use the correct modifier: Ctrl on Windows/Linux, Command on macOS.
-4.  Draw the box over visible seats or ticket controls.
-5.  Check the activity log for scan or selection messages.
+Dialogs, alerts and checkout
+Dialogs: while a box or stroke is active, the script clears common blocking dialogs by pressing buttons such as Agree & Continue, Continue, OK, Confirm or Close. This is what handles the wheelchair/accessible-seat prompt.
+Siren: if a Reserve click takes you to a checkout page within about ten minutes, the script plays a short siren so you notice.
+Checkout pages: the script suspends itself on URLs containing checkout or authorization and hides its panel there.
+Reading the activity log
 
-### The wrong number of items is selected, or nothing is selected
+Lines are JSON-style status messages. Bright lines mark key events (found, selected, add, price, reserve, dialog, orphan, alarm); dim lines are routine scans and waiting messages.
 
--   Check the quantity value before drawing the box.
--   Draw a tighter box around the intended items.
--   Make sure the items are visible and appear available on the website.
--   Try a fresh page load if the page has changed or become
-    unresponsive.
--   Remember that detection depends on the website's current page
-    structure.
+Typical add+ sequence:
 
-### The Reserve control is not activated
+found --- a group of seats was detected in the box.
+add: seat --- clicking seat n of total.
+add: panel --- ticket-type panel opened (with the option count and cheapest price in cheaper type).
+price: picked / already cheapest --- the price option chosen.
+add: clicked / add: added --- Add pressed and confirmed.
+reserve: clicked --- Reserve Tickets pressed.
 
--   Confirm the intended items were detected and selected.
--   Check whether the page has enabled its Reserve control.
--   The site may have changed its interface or booking flow. Do not
-    assume that a click means the reservation succeeded.
+The log is diagnostic feedback; it is not confirmation that a booking has been completed.
 
-### The script stops on checkout or authorization pages
+Important behavior and limitations
+Carter+ is configured for the Ticketmaster domains listed in this README only.
+The script identifies seats, buttons and price options from the page structure. Ticketmaster may change its seat map, panels or booking flow, which can affect detection.
+The script can only act on items the page exposes as selectable and that appear available.
+Add+ relies on finding a button labelled Add and a Reserve button, and (for cheaper) on price options with visible prices. Unusual layouts may not be recognised.
+A Reserve click is not proof of a successful reservation. Always check the website's own confirmation and checkout status.
+The script does not guarantee a particular seat, price, quantity, or successful checkout.
+Do not use the script to bypass queues, access controls, purchase limits, CAPTCHA, anti-bot systems, or other website protections.
+Use only where you are authorized to test or interact with the site, and follow Ticketmaster's terms and all applicable laws and event rules.
+Troubleshooting
+The panel does not appear
+Confirm Tampermonkey is installed and enabled.
+Confirm Carter+ is enabled in the Tampermonkey Dashboard.
+Confirm you are on one of the supported Ticketmaster domains.
+Refresh the page.
+Press Shift + Alt (or Shift + Option on macOS).
+Ctrl + drag does nothing
+Open the panel and make sure power is on.
+Confirm the seat map has finished loading.
+Use the correct modifier: Ctrl on Windows/Linux, Command on macOS.
+Draw over visible seats.
+Check the activity log for messages.
+Select+ says "no seats under the box / marker"
+The mark did not cover any available seats. Redraw it over the seats, or draw closer to the centre of each seat in pen type.
+Seats already picked earlier in the session are skipped. Press reset and try again.
+Smart mode finds nothing
+Check the quantity and draw the box over a row or block where a run of adjacent seats can appear.
+On events where every seat opens a ticket-type panel, use add+ instead.
+Add+ gets stuck or fails
+Check the log: no add button means the panel did not open after clicking the seat; not confirmed means Add did not seem to take.
+For cheaper, a pick failed line means the cheapest option could not be selected; the script still presses Add, so check the price.
+Make sure the box covers seats that are clickable and visible.
+The wrong number of seats is selected
+Check the quantity (smart and add+) before drawing the box.
+Draw a tighter box around the intended seats.
+Remember that single-seat protection may take one extra seat to avoid leaving a lone seat.
+The script stops on checkout or authorization pages
 
-This is intentional in the current version. Carter+ suspends its
-selection workflow on URLs that contain `checkout` or `authorization`.
+This is intentional. Carter+ suspends itself on URLs that contain checkout or authorization.
 
-------------------------------------------------------------------------
+Privacy
 
-## Privacy
+The current source does not declare external network requests, remote code dependencies, or Tampermonkey privileged API grants. It uses the current tab's session storage to retain a small amount of interface state (power, mode, quantity, types) and reservation-flow state. The script also interacts with the Ticketmaster page on which it runs.
 
-The current source does not declare external network requests, remote
-code dependencies, or Tampermonkey privileged API grants. It uses the
-current tab's session storage to retain a small amount of interface
-state and reservation-flow state. The script also interacts with the
-Ticketmaster page on which it runs.
+This description is based on the supplied Carter+ v2.7.0 source. Review the source yourself before installing or using any userscript.
 
-This description is based on the supplied Carter+ v2.3.0 source. Review
-the source yourself before installing or using any userscript.
+Version history
+2.7.0 --- Added add+ mode (gold box) with best and cheaper types: select a seat, choose ticket type, press Add, repeat, then reserve.
+2.6.0 --- Select+ gets a type option: selection (default drag box) or pen.
+2.5.0 --- Added the pen/marker style for select+.
+2.3.0 --- Previously documented release.
+License --- Jass
 
-------------------------------------------------------------------------
+Copyright (c) 2026 Jass. All rights reserved.
 
-## License --- Jass
-
-**Copyright (c) 2026 Jass. All rights reserved.**
-
-Carter+ is an original userscript authored and maintained by **Jass**.
+Carter+ is an original userscript authored and maintained by Jass.
 
 Unless Jass gives prior written permission:
 
-1.  You may install and use an unmodified copy for your own personal
-    use.
-2.  You may not sell, rent, sublicense, redistribute, or publicly
-    re-upload the script or substantial portions of its source code.
-3.  You may not remove or alter the author credit, copyright notice, or
-    license notice.
-4.  You may not publish modified or derivative versions as your own
-    work.
-5.  You may not use the script in a way that violates applicable law, a
-    website's terms, purchase limits, or access restrictions.
+You may install and use an unmodified copy for your own personal use.
+You may not sell, rent, sublicense, redistribute, or publicly re-upload the script or substantial portions of its source code.
+You may not remove or alter the author credit, copyright notice, or license notice.
+You may not publish modified or derivative versions as your own work.
+You may not use the script in a way that violates applicable law, a website's terms, purchase limits, or access restrictions.
 
-**No warranty:** The script is provided "AS IS", without warranties or
-guarantees of any kind. Jass is not responsible for failed selections,
-missed tickets, unsuccessful reservations, account restrictions, losses,
-or other damages arising from use of the script, to the maximum extent
-permitted by applicable law.
+No warranty: The script is provided "AS IS", without warranties or guarantees of any kind. Jass is not responsible for failed selections, missed tickets, unsuccessful reservations, account restrictions, losses, or other damages arising from use of the script, to the maximum extent permitted by applicable law.
 
-This is a custom permission notice for Carter+; it is not a claim that
-the script is licensed under MIT, GPL, Apache, or another standard
-open-source license. For permissions beyond personal use, contact the
-author and obtain written approval.
+This is a custom permission notice for Carter+; it is not a claim that the script is licensed under MIT, GPL, Apache, or another standard open-source license. For permissions beyond personal use, contact the author and obtain written approval.
 
-------------------------------------------------------------------------
+Credits
 
-## Credits
-
-**Created by:** Jass\
-**Project:** Carter+\
-**Version documented:** 2.3.0
+Created by: Jass
+Project: Carter+
+Version documented: 2.7.0
 
 Please retain the author credit when keeping your personal copy.
